@@ -16,7 +16,7 @@ export {
   encodeBaggage,
   encodeUserRef,
 } from './baggage.js';
-export { contextAccessor } from './accessor.js';
+export { CONTEXT_ACCESSOR, contextAccessor } from './accessor.js';
 export type { ContextAccessor } from './accessor.js';
 export { defineConfig } from './define_config.js';
 export type { ContextConfig } from './define_config.js';

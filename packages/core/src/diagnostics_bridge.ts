@@ -18,7 +18,7 @@ interface DiagnosticsLike {
  *
  * When that package is installed, we register this package's
  * {@link contextAccessor} as its trace source, so `emit()` auto-fills the
- * `traceId` on every `aviary:*` diagnostic event — for authz, inertia, durable,
+ * `traceId` on every `agora:*` diagnostic event — for authz, inertia, durable,
  * and any future emitter — with zero action from the app.
  *
  * The specifier is held in a variable so the import is treated as fully dynamic:

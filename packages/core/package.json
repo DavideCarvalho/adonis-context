@@ -35,8 +35,15 @@
     }
   },
   "files": ["dist/", "README.md", "CHANGELOG.md"],
-  "//sideEffects": "NOT false: context.ts holds the module-level singleton (AsyncLocalStorage + cross-boundary config) and define_config.ts holds the middleware's population-options holder. Both are process-global state that non-DI entrypoints (queue/durable workers, ace commands) rely on being one shared instance. A bundler told sideEffects:false could tree-shake these initializers. Pure modules (index, accessor, traceparent, baggage, middleware, provider) stay tree-shakeable.",
-  "sideEffects": ["**/context.js", "**/context.ts", "**/define_config.js", "**/define_config.ts"],
+  "//sideEffects": "NOT false: context.ts holds the module-level singleton (AsyncLocalStorage + cross-boundary config), define_config.ts holds the middleware's population-options holder, and accessor.ts publishes the accessor on a Symbol.for() global slot AT IMPORT TIME (the ecosystem decoupling contract other libs read). All are process-global state a bundler told sideEffects:false could tree-shake. Pure modules (index, traceparent, baggage, middleware, provider) stay tree-shakeable.",
+  "sideEffects": [
+    "**/context.js",
+    "**/context.ts",
+    "**/define_config.js",
+    "**/define_config.ts",
+    "**/accessor.js",
+    "**/accessor.ts"
+  ],
   "scripts": {
     "build": "tsc -p tsconfig.json && pnpm run copy:stubs",
     "copy:stubs": "mkdir -p dist/stubs/config && cp stubs/config/context.stub dist/stubs/config/context.stub",
