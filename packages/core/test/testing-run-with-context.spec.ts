@@ -1,6 +1,6 @@
-import { Context } from '@agora/context';
 import { describe, expect, it } from 'vitest';
-import { enterContext, runWithContext } from '../src/index.js';
+import { Context } from '../src/index.js';
+import { enterContext, runWithContext } from '../src/testing/index.js';
 
 describe('runWithContext', () => {
   it('runs the callback inside a fake store', () => {

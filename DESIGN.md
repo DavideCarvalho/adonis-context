@@ -120,8 +120,8 @@ pra trocar/mockar em teste (`app.container.swap`).
 
 - `@agora/context` — núcleo (ALS + middleware + provider + config + serialize +
   baggage + traceparent)
-- `@agora/context-testing` — `runWithContext()` / `enterContext()` p/ rodar código
-  num store fake
+- `@agora/context/testing` — `runWithContext()` / `enterContext()` p/ rodar código
+  num store fake (subpath do pacote `@agora/context`)
 
 ## 8. Não-objetivos
 

@@ -46,10 +46,10 @@ cross-boundary semantics, W3C baggage).
 
 ## Packages
 
-| Package | What |
+| Entry point | What |
 |---|---|
 | [`@agora/context`](./packages/core) | core — ALS, middleware, provider, config, serialize, baggage, traceparent |
-| [`@agora/context-testing`](./packages/testing) | `runWithContext()` / `enterContext()` test helpers |
+| [`@agora/context/testing`](./packages/core/src/testing) | `runWithContext()` / `enterContext()` test helpers |
 
 ## The Agora ecosystem
 

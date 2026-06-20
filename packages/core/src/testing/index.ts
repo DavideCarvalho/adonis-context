@@ -1,4 +1,5 @@
-import { Context, type ContextStore, randomTraceId } from '@agora/context';
+import { Context, type ContextStore } from '../context.js';
+import { randomTraceId } from '../traceparent.js';
 
 /** Everything but `traceId` is optional; `traceId` is auto-filled when omitted. */
 export type PartialContextStore = Partial<ContextStore>;

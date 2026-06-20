@@ -1,22 +1,24 @@
 ---
 title: Testing
-description: Run unit tests inside a fake context store with runWithContext and enterContext from @agora/context-testing.
+description: Run unit tests inside a fake context store with runWithContext and enterContext from @agora/context/testing.
 icon: FlaskConical
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
 
-Code that reads `Context.userRef()` or `Context.tenantId()` needs an active context to read *from*. In production that context comes from the HTTP middleware (or a `Context.run` in a worker / command); in a unit test there is no request, so you build a fake one. The `@agora/context-testing` package gives you two helpers to do exactly that, with sensible defaults so you set only the fields your test cares about.
+Code that reads `Context.userRef()` or `Context.tenantId()` needs an active context to read *from*. In production that context comes from the HTTP middleware (or a `Context.run` in a worker / command); in a unit test there is no request, so you build a fake one. The `@agora/context/testing` subpath gives you two helpers to do exactly that, with sensible defaults so you set only the fields your test cares about.
 
 ---
 
 ## Install
 
+The helpers ship inside the core package as the `@agora/context/testing` subpath — there is nothing extra to install:
+
 ```sh
-npm i -D @agora/context-testing
+npm i @agora/context
 ```
 
-The package re-uses the core `Context` under the hood, so the fake store it builds is the very same ALS store your production code reads from — there is no mock, just a real store with values you chose. Its only peer dependency is `@agora/context` itself.
+The subpath re-uses the core `Context` under the hood, so the fake store it builds is the very same ALS store your production code reads from — there is no mock, just a real store with values you chose.
 
 ---
 
@@ -25,7 +27,7 @@ The package re-uses the core `Context` under the hood, so the fake store it buil
 `runWithContext` runs `fn` inside a fake store built from a partial. Any field you omit defaults sensibly, and `traceId` is auto-filled with a random W3C-shaped id when you do not provide one — so you only specify what the test is actually about:
 
 ```ts
-import { runWithContext } from '@agora/context-testing'
+import { runWithContext } from '@agora/context/testing'
 import { Context } from '@agora/context'
 import { test } from '@japa/runner'
 
@@ -62,7 +64,7 @@ Because `fn` can be async, you can `await` it — but be aware that `run`-style 
 `enterContext` builds the same fake store but installs it with `enterWith` — so it **survives past the call**, with no callback to wrap. This is the helper for code that reads the context *after* the setup returns, typically across an `await`:
 
 ```ts
-import { enterContext } from '@agora/context-testing'
+import { enterContext } from '@agora/context/testing'
 import { Context } from '@agora/context'
 import { test } from '@japa/runner'
 
@@ -89,7 +91,7 @@ The relationship between the two helpers mirrors the core API exactly: `runWithC
 Most of the time you are not testing the context itself — you are testing a service that *reads* it. Wrap the call in a helper and assert on its output:
 
 ```ts
-import { runWithContext } from '@agora/context-testing'
+import { runWithContext } from '@agora/context/testing'
 import { test } from '@japa/runner'
 
 test.group('OrdersService', () => {
