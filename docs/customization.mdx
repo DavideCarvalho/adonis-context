@@ -1,0 +1,239 @@
+---
+title: Customization
+description: The five levels of customizing @agora/context — custom fields, populating values, non-HTTP entrypoints, the cross-process carrier, and swapping the accessor.
+icon: SlidersHorizontal
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+`@agora/context` is plug-and-play with sane defaults — `node ace configure` plus an empty `config/context.ts` works for most HTTP apps. But every layer is customizable, and the customization surface is organized as **five levels**, ordered from the most common to the most advanced. Nothing here is mandatory; reach for a level only when the default no longer fits.
+
+| Level | What you change | How (AdonisJS) | Default |
+|-------|-----------------|-----|---------|
+| **1** | Add your own fields | module augmentation | — |
+| **2** | Populate fields / trace id | `traceId` / `initialize` / `enrichers` in `defineConfig` | `traceparent` header → random |
+| **3** | Non-HTTP entrypoints | don't plug the middleware + `Context.run` / `enterWith` | middleware on `server` stack |
+| **4** | What survives cross-process | `carrier` / `serialize` / `baggage` in `defineConfig` | `traceId` + `tenantId` + `userRef` |
+| **5** | Swap the accessor libs read | `app.container.swap()` the binding | default accessor |
+
+Everything in levels 2 and 4 lives in the single `config/context.ts` file, validated by the exported `defineConfig` helper.
+
+---
+
+## Level 1 — Custom fields
+
+Add typed fields to the store with module augmentation. This is covered in detail on [The Store](/docs/context/the-store#adding-your-own-typed-fields); the short version:
+
+```ts title="types/context.ts"
+import '@agora/context'
+
+declare module '@agora/context' {
+  interface ContextStore {
+    locale?: string
+    impersonatorId?: string
+  }
+}
+```
+
+Augmentation only declares the field. Populating it is Level 2.
+
+---
+
+## Level 2 — Populate fields and override the trace id
+
+`config/context.ts` accepts hooks that the middleware runs at the start of every request. They let you control how the trace id is produced and pre-fill any store field (including your Level 1 custom fields). Every hook receives the AdonisJS `HttpContext`:
+
+```ts title="config/context.ts"
+import { defineConfig, randomTraceId } from '@agora/context'
+
+export default defineConfig({
+  // Override how the trace id is produced for a request.
+  traceId: (ctx) => ctx.request.header('x-correlation-id') ?? randomTraceId(),
+
+  // Merge extra fields into the initial store at request start.
+  initialize: (ctx) => ({
+    locale: ctx.request.header('accept-language'),
+    tenantId: ctx.subdomains?.tenant,
+  }),
+})
+```
+
+The available population options:
+
+- **`traceHeader?: string`** — the header to read the inbound trace id from. Defaults to the W3C `traceparent`. When the header is absent or malformed, a fresh trace id is generated.
+- **`traceId?: (ctx) => string`** — a full override of trace-id production. When provided, its return value wins over `traceHeader` and the random fallback.
+- **`initialize?: (ctx) => Partial<ContextStore>`** — a bag of fields merged into the initial store. Ideal for pre-populating `tenantId` and your custom fields.
+- **`enrichers?: ContextEnricher[]`** — derived-field functions, see [below](#deriving-fields-enrichers-and-lazy).
+
+`userRef` still typically enters **later**, via `Context.set()` after authentication, because auth runs after the context is established (see [Getting Started](/docs/context/getting-started#step-3--populate-the-user-and-tenant)).
+
+### Precedence — the resolved `traceId` and `requestId` always win
+
+The middleware applies values in a specific order, and the order matters:
+
+1. It computes the trace id (from your `traceId` hook → the `traceHeader` → a random fallback) and reads `requestId` from `ctx.request.id()`.
+2. It merges the `initialize(ctx)` bag into the store **first**.
+3. It writes the dedicated `traceId` and `requestId` **last**.
+
+The consequence: the **resolved `traceId` and `requestId` always win**. A stray `traceId` returned by `initialize()` cannot clobber the trace id the middleware resolved — the dedicated path is authoritative.
+
+### Deriving fields: enrichers and `lazy`
+
+For values *derived* from the store (a `displayName` from `tenantId`, a region from a header), use one of two mechanisms depending on cost:
+
+- **Eager — `enrichers`.** An array of `(store, ctx) => Partial<ContextStore> | void` functions the middleware runs right after entering the context (and after `initialize`). Each one sees the assembled store and may return a partial to merge, or mutate the store in place. A throwing enricher is **isolated** — it never breaks the request or the other enrichers.
+
+  ```ts title="config/context.ts"
+  export default defineConfig({
+    enrichers: [
+      (store) => ({ region: regionForTenant(store.tenantId) }),
+    ],
+  })
+  ```
+
+  Because the provider also pushes enrichers onto the singleton, a non-HTTP entrypoint can run them too, after a `Context.run`/`enterWith`, via `Context.runEnrichers()`.
+
+- **Lazy — `Context.lazy`.** For values that are expensive or rarely needed, compute on first access and memoize onto the store, so subsequent reads this request are free:
+
+  ```ts
+  const name = Context.lazy('displayName', (s) => lookupName(s.userRef))
+  ```
+
+  The factory runs at most once per store per key; if the field is already present, its value is returned and the factory is skipped. Returns `undefined` outside any context (nowhere to cache).
+
+---
+
+## Level 3 — Non-HTTP entrypoints
+
+The HTTP middleware is just the default. For a queue worker, an ace command, or any non-HTTP entrypoint, you don't need the middleware at all — you establish the context yourself with the public primitives:
+
+```ts
+import { Context, randomTraceId } from '@agora/context'
+
+// e.g. an ace command or a scheduled task
+await Context.run(
+  { traceId: randomTraceId(), userRef: { type: 'system', id: 'cron' } },
+  () => doTheWork(),
+)
+```
+
+Here `Context.run` is the right tool (not `enterWith`): you own a clean callback boundary, so the context is established for the duration of the work and torn down cleanly when it finishes. For cross-process jobs there is a dedicated helper, `Context.deserialize` — see [Cross-Process](/docs/context/cross-process).
+
+<Callout type="info">
+  If you want the context on *some* HTTP routes only, register the middleware on the **named** middleware stack and apply it per-route instead of the `server` stack — but the common (and configured-by-default) case is the server stack, so the context exists everywhere. The codemod wires the server stack for you.
+</Callout>
+
+---
+
+## Level 4 — Cross-process carrier
+
+When the context crosses a process or queue boundary it is reduced to a **carrier** — a flat, serializable snapshot. By default the carrier includes `traceId`, `tenantId`, and `userRef`. To carry an additional (Level 1) custom field across the boundary, list the fields explicitly:
+
+```ts title="config/context.ts"
+export default defineConfig({
+  carrier: ['traceId', 'tenantId', 'userRef', 'locale'],
+})
+```
+
+Or take full control of both directions with `serialize` / `deserialize` overrides:
+
+```ts title="config/context.ts"
+export default defineConfig({
+  serialize: (store) => ({
+    traceId: store.traceId,
+    tenantId: store.tenantId,
+    userRef: store.userRef,
+    // ...anything else you want on the wire
+  }),
+  deserialize: (carrier) => ({
+    traceId: carrier.traceId,
+    tenantId: carrier.tenantId,
+    userRef: carrier.userRef,
+  }),
+})
+```
+
+You can also tune **W3C baggage** propagation here. By default `Context.toBaggage()` / `fromBaggage()` map `tenantId` and `userRef`; set a custom key to namespace them, or `false` to never propagate a field:
+
+```ts title="config/context.ts"
+export default defineConfig({
+  baggage: {
+    tenantId: 'acme.tenant', // namespaced key
+    userRef: false,          // never put the principal on a baggage header
+  },
+})
+```
+
+The mechanics of `serialize()` / `deserialize()`, `bind()`, and the queue / durable / baggage patterns are covered on [Cross-Process](/docs/context/cross-process). What matters *here* is a sharp edge in how this config is stored.
+
+<Callout type="warn" title="The carrier config is process-global">
+  The `carrier` / `serialize` / `deserialize` / `baggage` / `enrichers` config does **not** live in the IoC container — it lives in a module-level singleton, because it has to be readable from places the container cannot reach (queue workers, Lucid hooks, the durable worker, ace commands). The provider reads `config/context.ts` at `boot()` and pushes this subset onto the singleton via `Context.configure`. That makes it **process-global**: shared across the whole process.
+
+  Each `Context.configure` call **replaces the whole carrier config wholesale** — it is never merged. This is on purpose: it guarantees you can never end up pairing one app's `serialize` with another app's `deserialize`.
+
+  Because of that, a **second `configure` with a *different* config emits a `console.warn`** — the last one wins, which is rarely what you want. In multi-app setups (one process hosting several apps) or in test suites that configure the package repeatedly, call **`Context.resetConfig()`** between apps/tests to clear the singleton back to defaults.
+</Callout>
+
+```ts
+import { Context } from '@agora/context'
+
+// In a test or multi-app harness, between apps:
+Context.resetConfig()
+```
+
+---
+
+## Level 5 — Swapping the accessor
+
+Consumer libraries (authz, filter, diagnostics) do not import `Context` directly. Instead, at import time, `@agora/context` publishes a read-only **accessor** on a `globalThis` slot keyed by `Symbol.for('@agora/context:accessor')`, exported as `CONTEXT_ACCESSOR`. Consumers read that slot **structurally** — they never import this package — and degrade to `undefined` when it is absent.
+
+The accessor surface is intentionally narrow — consumers *read*, they do not drive the lifecycle:
+
+```ts
+interface ContextAccessor {
+  traceId(): string | undefined
+  tenantId(): string | undefined
+  userRef(): UserRef | undefined
+  get(): ContextStore | undefined
+}
+```
+
+The default implementation, `contextAccessor`, is a thin facade over the singleton `Context`. The package also registers it as a binding in the IoC container so you can **swap or mock** it — for instance an accessor that resolves the *full* user from the `userRef`, or one used in tests:
+
+```ts title="providers/app_provider.ts"
+import {
+  CONTEXT_ACCESSOR,
+  type ContextAccessor,
+  Context,
+} from '@agora/context'
+
+export default class AppProvider {
+  constructor(protected app: ApplicationService) {}
+
+  async boot() {
+    const users = await this.app.container.make(UserRepository)
+
+    const hydrating: ContextAccessor = {
+      traceId: () => Context.traceId(),
+      tenantId: () => Context.tenantId(),
+      userRef: () => Context.userRef(),
+      get: () => Context.get(),
+      // ...plus whatever extra resolution your consumers expect
+    }
+
+    this.app.container.swap(CONTEXT_ACCESSOR as any, () => hydrating)
+  }
+}
+```
+
+<Callout type="info">
+  Swapping the container binding is primarily an **advanced / testing** seam. Most consumer libraries read the structural `globalThis` accessor, so the everyday way to change what they see is the config in levels 1–4, not a container swap.
+</Callout>
+
+---
+
+## Next steps
+
+- [Cross-Process](/docs/context/cross-process) — the full story behind `serialize` / `deserialize`, `bind`, baggage, and the queue / durable patterns
+- [Testing](/docs/context/testing) — `Context.resetConfig()` and the testing helpers
+- [The Store](/docs/context/the-store) — the field-level reference for everything you are customizing

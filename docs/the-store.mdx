@@ -1,0 +1,156 @@
+---
+title: The Store
+description: The ContextStore shape, why it carries a UserRef instead of the full user, the always-present traceId invariant, and how to add your own typed fields.
+icon: Database
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+Everything `@agora/context` does revolves around one small interface: the `ContextStore`. It is the object held in `AsyncLocalStorage` for the lifetime of a request (or job, or command), and it is what every accessor reads from. Understanding its shape — and a couple of deliberate decisions baked into it — makes the rest of the library obvious.
+
+---
+
+## The `ContextStore` shape
+
+```ts
+interface ContextStore {
+  traceId: string
+  requestId?: string
+  userRef?: UserRef
+  tenantId?: string
+  traceparent?: ParsedTraceparent
+}
+
+interface UserRef {
+  type: string
+  id: string | number
+}
+```
+
+Only `traceId` is required:
+
+- **`traceId`** — a correlation id for the request. Always present (see [the invariant below](#the-traceid-invariant)). Used by [diagnostics](/docs/diagnostics) and [durable](/docs/durable) to correlate logs, spans, and workflows.
+- **`requestId`** — an optional inbound request id, captured from AdonisJS's `ctx.request.id()` (enabled via `generateRequestId` in `config/app.ts`). Distinct from the trace id: the trace id correlates a *distributed* operation, while the request id identifies *this one HTTP request*.
+- **`userRef`** — an optional reference to the acting principal, as `{ type, id }`. Set by your auth layer.
+- **`tenantId`** — the optional active tenant. Read by the filter library to scope queries.
+- **`traceparent`** — the parsed *upstream* W3C `traceparent` (span-id + trace-flags), captured at request start. This lets a re-emitted `traceparent` faithfully continue the distributed trace — propagating the parent span-id and the upstream sampling decision — instead of fabricating a new one. It is **process-local**: deliberately *not* part of the default cross-process carrier. See [`toTraceparent`](#the-traceid-invariant).
+
+You read these through the `Context` accessors rather than poking at the object directly:
+
+```ts
+import { Context } from '@agora/context'
+
+Context.traceId()  // string | undefined
+Context.tenantId() // string | undefined
+Context.userRef()  // UserRef | undefined
+Context.get()      // ContextStore | undefined — the whole thing
+```
+
+---
+
+## Why a `UserRef`, not the full user
+
+The single most important design decision in the store is that it carries a **reference** to the user — `{ type, id }` — and never the hydrated Lucid model.
+
+```ts
+// What the store holds:
+Context.set('userRef', { type: 'user', id: 42 })
+
+// NOT this:
+Context.set('userRef', userModelWithRelationsAndDbConnection) // ✗
+```
+
+This is deliberate, and it pays off in two places:
+
+1. **Serializability.** The store has to survive being sent across a process or queue boundary (see [Cross-Process](/docs/context/cross-process)). A `{ type, id }` pair serializes to JSON trivially. A full Lucid model does not — it drags along loaded relations, a live database connection, and references that cannot cross a boundary.
+2. **Decoupling.** The context layer should not know what a `User` is, nor own its lifecycle. It records *who is acting* as a stable, minimal reference. If a consumer genuinely needs the full user, it resolves it from the ref — that is a job for an application service, not the context.
+
+The `type` discriminator is what lets a ref point at different kinds of principals — `{ type: 'user', id: 42 }`, `{ type: 'apiKey', id: 'ak_…' }`, `{ type: 'system', id: 'cron' }` — without the context caring which.
+
+<Callout type="info">
+  If you find yourself wanting the *whole* user in the context, you usually want one of two things instead: resolve the full user from the ref in a service, or (advanced) swap the accessor your libraries consume so it hydrates the user on demand. See [Customization → swapping the accessor](/docs/context/customization#level-5--swapping-the-accessor). For values that are expensive to compute, there is also [`Context.lazy`](/docs/context/customization#deriving-fields-enrichers-and-lazy).
+</Callout>
+
+---
+
+## The `traceId` invariant
+
+`traceId` is the only **non-optional** field on the store, and the library works hard to keep it that way: **if there is a context at all, it has a trace id.**
+
+- On an HTTP request, the middleware reads the inbound `traceparent` header (or your configured header / `traceId` hook) and falls back to a freshly generated id when none is present or valid.
+- When re-hydrating a context from a cross-process carrier, if the carrier arrives without a trace id, the library synthesizes a fresh one (with a one-time warning) rather than propagate `undefined`. See [the trace-id safety net](/docs/context/cross-process#the-trace-id-safety-net).
+
+The reason is correlation. Diagnostics and durable use the trace id as the join key across logs, spans, and workflow steps. A `traceId` that could be `undefined` would force every consumer to handle a hole that should never exist — so the library guarantees the hole never appears. You can rely on `Context.traceId()` returning a string **whenever a context is active** (it still returns `undefined` outside any context — for example, during boot).
+
+The trace id follows the [W3C Trace Context](https://www.w3.org/TR/trace-context/) shape: a 32-hex-character id. The package exports helpers for working with it directly:
+
+```ts
+import {
+  extractTraceparent,
+  parseTraceparent,
+  randomTraceId,
+  toTraceparent,
+} from '@agora/context'
+
+// Pull just the trace-id out of a `traceparent` header (or a custom header):
+extractTraceparent(ctx.request.headers())          // '4bf9…4736' | undefined
+extractTraceparent(ctx.request.headers(), 'x-b3')
+
+// Parse the whole thing — trace-id + parent span-id + flags:
+parseTraceparent(ctx.request.headers())            // { traceId, parentId, flags } | undefined
+
+randomTraceId()                                     // '4bf92f3577b34da6a3ce929d0e0e4736'
+
+// Re-emit a downstream `traceparent`. Pass the upstream parse to faithfully
+// continue the incoming trace (propagating the parent-id and the sampled bit):
+toTraceparent(Context.traceId()!)                   // '00-<traceId>-<randomSpanId>-01'
+toTraceparent(Context.traceId()!, Context.get()?.traceparent)
+```
+
+<Callout type="info">
+  `toTraceparent` with no `upstream` mints a random parent span-id and defaults the flags to `01` (sampled). When you pass the captured upstream `traceparent` (the `traceparent` field on the store), it propagates the upstream span-id as the parent-id and the upstream flags verbatim — so an incoming `-00` (not sampled) round-trips as `-00`.
+</Callout>
+
+---
+
+## Adding your own typed fields
+
+The built-in fields cover identity, tenancy, and correlation — but your app probably has its own ambient values worth carrying: a locale, an impersonator id, a feature-flag cohort. The store is **open for extension** through TypeScript [module augmentation](https://www.typescriptlang.org/docs/handbook/declaration-merging.html#module-augmentation), so you add fields without forking the library and keep full type safety.
+
+This is what the docs call **Level 1** customization — declare an augmentation block once, anywhere your build includes (a `types/context.ts` or any module file):
+
+```ts title="types/context.ts"
+import '@agora/context'
+
+declare module '@agora/context' {
+  interface ContextStore {
+    locale?: string
+    impersonatorId?: string
+  }
+}
+```
+
+Once that augmentation is in scope, your new fields are fully typed everywhere `ContextStore` is used:
+
+```ts
+Context.set('locale', 'pt-BR')        // ✓ typed
+Context.set('impersonatorId', 'u_99') // ✓ typed
+Context.get()?.locale                 // string | undefined
+Context.set('locale', 42)             // ✗ type error
+```
+
+<Callout type="info">
+  Keep augmented fields **serializable** if you ever want them to cross a process/queue boundary — strings, numbers, plain objects, the same rule as `userRef`. Adding a field to the store does *not* automatically make it travel across boundaries; you opt it into the carrier explicitly. See [Customization → cross-process carrier](/docs/context/customization#level-4--cross-process-carrier).
+</Callout>
+
+<Callout type="warn">
+  Module augmentation is a *compile-time* contract — it tells TypeScript the field exists. It does not populate the field. To set a value at request start, use the `initialize` hook or an `enricher`; to set it later, call `Context.set()`. See [Customization → populating fields](/docs/context/customization#level-2--populate-fields-and-override-the-trace-id).
+</Callout>
+
+---
+
+## Next steps
+
+- [Cross-Process](/docs/context/cross-process) — make the store (and your custom fields) survive a queue or durable boundary
+- [Customization](/docs/context/customization) — populate your custom fields, override the trace id, and more
+- [Testing](/docs/context/testing) — build a fake store for unit tests

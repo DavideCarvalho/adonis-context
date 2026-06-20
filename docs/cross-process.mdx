@@ -1,0 +1,208 @@
+---
+title: Cross-Process
+description: Carry the context across queue, durable and ace boundaries with serialize() / deserialize(), bind(), and W3C baggage — the hard part that justifies the library.
+icon: Network
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+This is the page that justifies the library. Reading the current user inside a single request is convenient; carrying that context **across a process or queue boundary** — so the `@adonisjs/queue` worker that processes a job knows who enqueued it, and the durable workflow step knows which tenant it belongs to — is the genuinely hard part. `@agora/context` solves it with two methods: `serialize()` and `deserialize()`.
+
+---
+
+## Why ALS does not cross boundaries
+
+`AsyncLocalStorage` propagates a store along the **async execution tree within a single process**. The moment you cross out of that tree — you push a job onto a Redis-backed queue, you dispatch a remote durable task, you hand work to a sub-process — the ALS store is gone. The worker on the other side starts with an empty context. There is no magic that carries it; the store lives in process memory, and that memory does not travel.
+
+So to carry the context across a boundary, you have to **explicitly extract a serializable snapshot on one side and re-hydrate it on the other.** That is exactly what `serialize` / `deserialize` are for.
+
+---
+
+## `serialize()` — a flat carrier
+
+`Context.serialize()` takes the active store and produces a `ContextCarrier`: a plain, JSON-safe object carrying only what is needed to re-hydrate on the other side.
+
+```ts
+interface ContextCarrier {
+  traceId: string
+  tenantId?: string
+  userRef?: UserRef
+}
+
+const carrier = Context.serialize()
+// { traceId: '4bf9…4736', tenantId: 't1', userRef: { type: 'user', id: 42 } }
+```
+
+Note what is **not** there: no hydrated user model, no database connection, no loaded relations, no `traceparent` parse (that field is process-local). Just the refs. This is precisely why the store carries a `userRef` rather than a full user (see [The Store](/docs/context/the-store#why-a-userref-not-the-full-user)) — a `{ type, id }` pair crosses a boundary trivially; a Lucid model does not.
+
+`Context.serialize()` returns `undefined` when called outside any context. Which fields it includes is configurable via the `carrier` option or a full `serialize` override — see [Customization → cross-process carrier](/docs/context/customization#level-4--cross-process-carrier).
+
+---
+
+## `deserialize()` — re-enter the store
+
+On the other side of the boundary, `Context.deserialize(carrier, fn)` rebuilds a store from the carrier and runs `fn` inside it. It is the cross-process cousin of `Context.run`:
+
+```ts
+Context.deserialize(carrier, () => {
+  // inside here, Context.traceId() / tenantId() / userRef() are restored
+  return doTheWork()
+})
+```
+
+Everything `fn` calls — synchronously or across `await`s within the callback — sees the re-hydrated context, just as if it were running inside the original request.
+
+---
+
+## The queue pattern
+
+The integration lives on the side that already owns the boundary — there is **no `@agora/context-queue` bridge package to install.** You wire two lines: one where you dispatch, one where you consume.
+
+**On dispatch**, attach the carrier to the job payload:
+
+```ts title="app/services/invoice_service.ts"
+import queue from '@adonisjs/queue/services/main'
+import { Context } from '@agora/context'
+
+await queue.dispatch('send-invoice', {
+  ...payload,
+  __ctx: Context.serialize(), // snapshot the current context onto the job
+})
+```
+
+**In the worker / job handler**, re-hydrate before running the real work:
+
+```ts title="app/jobs/send_invoice_job.ts"
+import { Context } from '@agora/context'
+
+export default class SendInvoiceJob {
+  async handle(payload: { __ctx?: ContextCarrier } & InvoicePayload) {
+    return Context.deserialize(payload.__ctx, () => this.send(payload))
+  }
+}
+```
+
+Inside `send(payload)`, `Context.userRef()` returns the principal who enqueued the job, `Context.tenantId()` returns their tenant, and `Context.traceId()` ties the worker's logs back to the originating request. Your handler code does not change at all — it reads the context exactly as it would inside an HTTP request.
+
+<Callout type="info">
+  The `__ctx` key is just a convention for "this is the serialized context" — name it whatever you like, as long as the dispatch and consume sides agree. If a job arrives without a carrier (an external producer, an older job), `Context.deserialize` still works: see the [trace-id safety net](#the-trace-id-safety-net) below.
+</Callout>
+
+---
+
+## ace commands and other entrypoints
+
+A cron-triggered ace command has no HTTP request, so no context is established for it. Wrap the body in `Context.run` to give it one — useful so the trace id ties together everything the command does (including jobs it dispatches):
+
+```ts title="commands/reconcile.ts"
+import { BaseCommand } from '@adonisjs/core/ace'
+import { Context, randomTraceId } from '@agora/context'
+
+export default class Reconcile extends BaseCommand {
+  static commandName = 'reconcile'
+
+  async run() {
+    await Context.run(
+      { traceId: randomTraceId(), userRef: { type: 'system', id: 'cron' } },
+      () => this.reconcileAll(),
+    )
+  }
+}
+```
+
+`Context.run` is the right tool here (not `enterWith`): you own a clean callback boundary, so the context is established for the duration of the command and torn down cleanly when it finishes.
+
+---
+
+## `bind()` — escaping ALS's blind spots
+
+ALS follows the async tree, but a few constructs break the chain: callbacks registered *now* but invoked *later* outside the originating async context — `setTimeout`/`setInterval`, `EventEmitter` listeners, and some job callbacks. `Context.bind(fn)` snapshots whatever context is active at bind time and re-enters it every time the wrapped function later runs:
+
+```ts
+import { Context } from '@agora/context'
+
+emitter.on('done', Context.bind(() => log(Context.traceId())))
+setTimeout(Context.bind(handler), 1000)
+```
+
+Arguments, `this`, and the return value all pass through unchanged. If nothing is active at bind time, `bind` returns the original `fn` untouched (so the bound function simply runs with no active store).
+
+---
+
+## The durable integration
+
+For durable workflows, the context rides the **traceparent hook that already exists** rather than a bespoke channel. You feed the engine a function that turns the current trace id into a W3C `traceparent` header:
+
+```ts
+import { Context, toTraceparent } from '@agora/context'
+
+const engine = new WorkflowEngine({
+  traceparent: () => toTraceparent(Context.traceId()!, Context.get()?.traceparent),
+})
+```
+
+`toTraceparent` wraps the trace id into a `00-<traceId>-<spanId>-01` header (and, given the captured upstream parse, faithfully continues the incoming trace). From there the durable `RemoteTask` carries the carrier across to the worker — including a Python worker — which re-hydrates the snapshot before running the step. The tenant and `userRef` ride along, so a durable step knows not just *which trace* it belongs to but *who* and *which tenant* it is acting for.
+
+---
+
+## W3C baggage — the standards-compliant option
+
+Alongside the bespoke `ContextCarrier`, the context can ride a real [W3C `baggage`](https://www.w3.org/TR/baggage/) header that any baggage-aware peer (OpenTelemetry SDKs, gateways) understands. This is opt-in and independent of the carrier path.
+
+```ts
+import { Context } from '@agora/context'
+
+// Build a baggage header from the active context (maps tenantId + userRef):
+const header = Context.toBaggage() // 'tenantId=t1,userRef=user%3A42' | undefined
+
+// On the other side, re-hydrate from an inbound baggage header and run inside it.
+// Baggage carries no trace-id, so it's seeded from `traceparent` (when supplied
+// and valid) else a fresh random id — mirroring the middleware:
+Context.fromBaggage(req.headers.baggage, () => doTheWork(), {
+  traceparent: req.headers.traceparent,
+})
+```
+
+By default `toBaggage` maps `tenantId` and `userRef` (the ref encoded as a compact `type:id` token). `fromBaggage` is tolerant of a malformed or absent header — it just yields a context with those fields unset. Tune the keys, or disable a field entirely, via the `baggage` config option — see [Customization → cross-process carrier](/docs/context/customization#level-4--cross-process-carrier).
+
+---
+
+## The snapshot caveat
+
+There is one behavior you must internalize before building long-running workflows on top of this.
+
+<Callout type="warn" title="The carrier is a snapshot, not a live view">
+  A carrier captures the user and tenant **at the moment you call `serialize()`** — at *dispatch time*. A workflow that runs for days re-hydrates *that snapshot*, not the current live value.
+
+  If a user's role changes, or they are deactivated, or the tenant is reconfigured *after* the job was enqueued, the re-hydrated context still reflects the world as it was when the work was dispatched. The carrier is the **history**, not the present.
+
+  This is a deliberate decision, not a bug: a workflow step should generally act with the authority it was dispatched with, not with authority that may have changed underneath it. But if your use case genuinely needs the *current* value, re-resolve it inside the step from a stable id (e.g. look the user up fresh by `userRef.id`) rather than trusting the carrier's snapshot.
+</Callout>
+
+---
+
+## The trace-id safety net
+
+`ContextStore.traceId` is a non-optional `string` (see [the invariant](/docs/context/the-store#the-traceid-invariant)), and `deserialize` protects it. A carrier that crosses the boundary **without** a trace id — for instance, one produced by a different runtime, or a job from an external system that never set one — would otherwise re-hydrate into a store with an undefined trace id, breaking the correlation that diagnostics and durable depend on.
+
+To prevent that, `deserialize` (and the underlying carrier→store step) **generates a fresh `randomTraceId()` when the incoming carrier has no trace id**, emitting a one-time `console.warn` so the gap is visible without spamming your logs. The result is that any context you re-enter always has a valid trace id, no matter how messy the producer was.
+
+---
+
+## Putting it together
+
+The cross-process story is small on purpose — three concepts:
+
+1. `serialize()` flattens the active store to a JSON-safe carrier (refs only, no models or connections).
+2. You ship the carrier however your boundary already ships data — a queue payload field, the durable traceparent hook, a W3C baggage header.
+3. `deserialize(carrier, fn)` re-enters the store and runs your work inside it, with a trace-id safety net.
+
+And one rule to remember: **the carrier is a snapshot taken at dispatch time, not a live link to the present.**
+
+---
+
+## Next steps
+
+- [Customization](/docs/context/customization#level-4--cross-process-carrier) — choose which fields travel, or override `serialize` / `deserialize` entirely
+- [The Store](/docs/context/the-store) — why the store carries refs, and the trace-id invariant
+- [Testing](/docs/context/testing) — build a context in tests for code that reads it after an `await`

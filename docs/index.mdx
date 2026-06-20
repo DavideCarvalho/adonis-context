@@ -1,0 +1,129 @@
+---
+title: Introduction
+description: A module-level AsyncLocalStorage for AdonisJS that carries user, tenant and traceId across every boundary — HTTP, queue, durable and ace.
+icon: Boxes
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+import { Steps, Step } from 'fumadocs-ui/components/steps';
+import { Cards, Card } from 'fumadocs-ui/components/card';
+
+`@agora/context` is a small piece of plumbing with an outsized payoff: a single, process-wide [`AsyncLocalStorage`](https://nodejs.org/api/async_context.html#class-asynclocalstorage) (ALS) store that carries the **current user**, the **current tenant**, and a **trace id** through every layer of your app — controllers, services, middleware, Lucid model hooks, queue workers, durable steps, and plain functions — without you threading those values through method signatures.
+
+It is deliberately unglamorous. Most of the time you will not call it directly at all. You wire it once with `node ace configure`, your auth layer drops a `userRef` into it, and from then on the rest of the Agora ecosystem reads from it for free.
+
+<Callout type="info" title="Alpha">
+  This package is published as `0.1.0`. The API documented here reflects the current alpha. Pin a version and expect refinements before `1.0`.
+</Callout>
+
+---
+
+## Why not just `HttpContext`?
+
+AdonisJS v6 already ships an ALS-backed `HttpContext` — enable `useAsyncLocalStorage` and `HttpContext.getOrFail()` reaches the current request from anywhere. So why a second store?
+
+Because `HttpContext` **only lives inside an HTTP request**. `HttpContext.getOrFail()` throws the moment you step outside one — and the whole point of this library is the work that happens *outside* the request:
+
+- a `@adonisjs/queue` worker processing a job someone enqueued an hour ago,
+- a durable workflow step running in another process (or another language),
+- an ace command run from cron,
+- a Lucid model hook firing during a seeder.
+
+`@agora/context` is the thin, **serializable** layer that crosses the boundaries `HttpContext` cannot. It runs identically inside and outside HTTP, and — crucially — it is read from a module-level singleton, so code that the IoC container never touches can still reach it.
+
+<Callout type="info">
+  Think of it as the **`reflect-metadata` of the ecosystem**: nearly everything depends on it, almost nobody calls it by hand. If you have used Laravel's [`Context`](https://laravel.com/docs/12.x/context) facade, this is the same idea, expressed for AdonisJS — but built to travel across processes.
+</Callout>
+
+---
+
+## Quickstart
+
+Install, configure, set the user once, read it anywhere. For the full setup (tenant, custom fields, non-HTTP entrypoints), see [Getting Started](/docs/context/getting-started).
+
+<Steps>
+<Step>
+
+Install and configure — the codemod registers the provider, plugs the middleware onto the `server` stack, and publishes `config/context.ts`:
+
+```sh
+node ace add @agora/context
+```
+
+</Step>
+<Step>
+
+The middleware now seeds a fresh context (with a `traceId`) on every request automatically. Drop the current user in from your auth layer once you've authenticated the request:
+
+```ts
+import { Context } from '@agora/context'
+
+Context.set('userRef', { type: 'user', id: user.id })
+// Context.set('tenantId', user.tenantId) // if you're multi-tenant
+```
+
+</Step>
+<Step>
+
+Read it anywhere downstream — in a service, a Lucid hook, an event listener, even outside the container:
+
+```ts
+import { Context } from '@agora/context'
+
+Context.userRef()  // { type: 'user', id: 42 }
+Context.tenantId() // the active tenant, if set
+Context.traceId()  // correlates logs, spans and workflows for this request
+```
+
+</Step>
+</Steps>
+
+---
+
+## What problem it solves
+
+In a typical AdonisJS app, "who is the current user?" and "which tenant are we serving?" are answered either by passing `ctx.auth.user` down through every call, or by reaching for `HttpContext.getOrFail()`. The first is prop-drilling; the second only works inside the request and throws everywhere else.
+
+`@agora/context` sidesteps both:
+
+- **Any code can read it** — injectable or not. Lucid model hooks, plain helper functions, and queue handlers all call the same `Context.traceId()` / `Context.tenantId()` / `Context.userRef()`.
+- **No prop-drilling.** You stop passing `currentUser` down through five service calls just so the bottom one can stamp an audit row.
+- **It crosses processes.** Serialize the context onto a queue job; re-hydrate it in the worker. The worker knows who enqueued the work and which tenant it belongs to.
+
+---
+
+## Its role: plumbing the ecosystem consumes
+
+The store carries a handful of values the rest of the libraries care about, exposed through tiny accessors:
+
+| What | Accessor | Who reads it |
+|------|----------|--------------|
+| The acting principal (`{ type, id }`) | `Context.userRef()` | authz — the *causer* of every change |
+| The active tenant | `Context.tenantId()` | filter — scopes queries to the tenant automatically |
+| A correlation id for the request | `Context.traceId()` | [diagnostics](/docs/diagnostics) / [durable](/docs/durable) — correlate logs, spans and workflows |
+
+Notice the pattern: **the context library never decides anything.** It does not authenticate, it does not pick a tenant, it does not log. Some other layer resolves those values and *sets* them; this library is the shared place they live so everyone else can *read* them.
+
+Consumer libraries don't even import `@agora/context` — they read a read-only accessor that this package publishes on a `globalThis` slot at import time, and **degrade cleanly when it is absent**. Adding `@agora/context` lights them up; removing it does not break them. See [Customization → swapping the accessor](/docs/context/customization#level-5--swapping-the-accessor).
+
+---
+
+## It is worth installing on its own
+
+Even with no other ecosystem library in your project, `@agora/context` earns its keep. The standalone pitch is one sentence:
+
+> **The current user, tenant and trace id, anywhere — including queue workers and ace commands — without prop-drilling and without `HttpContext.getOrFail()` throwing on you.**
+
+A service buried four calls deep can ask `Context.userRef()` for the acting principal. A logging hook can stamp `Context.traceId()` on every line. A Lucid `@beforeSave` hook — which has no access to the request — can still read the current tenant. A queue worker can read the user who enqueued the job. That alone is reason enough to wire it in.
+
+---
+
+## Where to go next
+
+<Cards>
+  <Card title="Getting Started" href="/docs/context/getting-started" description="Configure the package, read the traceId, and populate the user/tenant from your auth layer." />
+  <Card title="The Store" href="/docs/context/the-store" description="The ContextStore shape, why it carries a UserRef and not the full user, and how to add your own typed fields." />
+  <Card title="Cross-Process" href="/docs/context/cross-process" description="Carry the context across queue and durable boundaries with serialize() / deserialize() and W3C baggage." />
+  <Card title="Customization" href="/docs/context/customization" description="The five levels of customization — from a custom field to swapping the accessor your libraries consume." />
+  <Card title="Testing" href="/docs/context/testing" description="Run unit tests inside a fake store with runWithContext and enterContext." />
+</Cards>

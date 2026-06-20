@@ -1,0 +1,167 @@
+---
+title: Getting Started
+description: Configure @agora/context, read the traceId anywhere, and populate the user and tenant from your auth layer.
+icon: Rocket
+---
+
+import { Steps, Step } from 'fumadocs-ui/components/steps';
+import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
+import { Callout } from 'fumadocs-ui/components/callout';
+
+Getting `@agora/context` running is two steps: configure the package once, then start reading the context anywhere in your app. From there, your auth layer drops the current user and tenant into the store so the rest of your code — and the rest of the ecosystem — can read them.
+
+---
+
+## Prerequisites
+
+- **Node.js 20.6+** (the store is built on `node:async_hooks`)
+- **AdonisJS 6** (`@adonisjs/core` `^6.12.0` is the only peer dependency)
+- **TypeScript 5+**
+
+---
+
+## Step 1 — Install and configure
+
+The package ships an ace `configure` hook, so the recommended flow is a single command:
+
+<Tabs items={['node ace add', 'manual']}>
+<Tab value="node ace add">
+
+```sh
+node ace add @agora/context
+```
+
+`add` installs the package with your detected package manager and then runs `node ace configure @agora/context` for you.
+
+</Tab>
+<Tab value="manual">
+
+```sh
+npm i @agora/context
+node ace configure @agora/context
+```
+
+Install first, then run `configure` yourself.
+
+</Tab>
+</Tabs>
+
+`configure` runs three codemods so there is **zero manual wiring**:
+
+1. registers the service provider (`@agora/context/context_provider`) in `adonisrc.ts`;
+2. registers the context middleware (`@agora/context/context_middleware`) on the **`server`** middleware stack;
+3. publishes `config/context.ts` from a stub.
+
+<Callout type="info">
+  The middleware lands on the **server** stack (not the router stack) on purpose: the server stack runs on *every* request, before route resolution, so the context exists for everything downstream — including other server middleware. See [the `enterWith` section below](#why-enterwith-not-run).
+</Callout>
+
+The published config is all-optional and commented out — the defaults work out of the box:
+
+```ts title="config/context.ts"
+import { defineConfig } from '@agora/context'
+
+export default defineConfig({
+  // traceHeader: 'traceparent',
+  // initialize: (ctx) => ({ tenantId: ctx.request.header('x-tenant-id') }),
+  // carrier: ['traceId', 'tenantId', 'userRef'],
+})
+```
+
+Every key on `defineConfig` is covered in [Customization](/docs/context/customization).
+
+---
+
+## Step 2 — Read the context anywhere
+
+`Context` is a plain singleton — import it and call its accessors. No injection, no `app.container.make` required, which is the whole point: it works in services, middleware, Lucid hooks, event listeners, and plain functions alike.
+
+```ts
+import { Context } from '@agora/context'
+
+Context.traceId()  // string | undefined — the request correlation id
+Context.tenantId() // string | undefined — the active tenant
+Context.userRef()  // { type, id } | undefined — the acting principal
+Context.get()      // the whole ContextStore | undefined
+```
+
+Every accessor returns `undefined` when called **outside** any context (for example during app boot, before any request) — they never throw. A logging hook that stamps the trace id on each line looks like this:
+
+```ts title="app/services/order_service.ts"
+import logger from '@adonisjs/core/services/logger'
+import { Context } from '@agora/context'
+
+export class OrderService {
+  async place(order: Order) {
+    logger.info({ traceId: Context.traceId(), tenant: Context.tenantId() }, 'placing order')
+    // ...
+  }
+}
+```
+
+---
+
+## Step 3 — Populate the user and tenant
+
+The middleware establishes the context and the trace id, but it deliberately does **not** know who the user is — authentication is not this library's job. Your auth layer resolves the principal and writes it into the active store with `Context.set()`. A natural home for that is a middleware that runs after `auth`:
+
+```ts title="app/middleware/stamp_context_middleware.ts"
+import type { HttpContext } from '@adonisjs/core/http'
+import type { NextFn } from '@adonisjs/core/types/http'
+import { Context } from '@agora/context'
+
+export default class StampContextMiddleware {
+  async handle(ctx: HttpContext, next: NextFn) {
+    const user = ctx.auth.user
+    if (user) {
+      Context.set('userRef', { type: 'user', id: user.id })
+      Context.set('tenantId', user.tenantId)
+    }
+    return next()
+  }
+}
+```
+
+`Context.set(key, value)` mutates the store the server middleware already entered. It is fully typed against `ContextStore`, so `Context.set('userRef', …)` only accepts a `UserRef`.
+
+<Callout type="warn" title="set() outside a context is a no-op">
+  If you call `Context.set()` where **no context is active** — for example on a route the server middleware somehow didn't cover, or before any request — the value is silently dropped (it never throws, for backward compatibility) and a **one-shot `console.warn`** fires to flag the footgun. If you see that warning, make sure the context is established first (the server middleware, a `Context.run`, or a `Context.enterWith`). The warning fires once per process; `Context.resetSetWarning()` re-arms it (mainly for tests).
+</Callout>
+
+<Callout type="info">
+  Why does a *later* middleware set the user instead of the context middleware itself? Because authentication runs *after* the request context exists. The server middleware enters the store at the very top of the pipeline; your auth-aware middleware fills in the principal once it has been verified. This split is intentional — see [The Store](/docs/context/the-store) for why the store carries a `userRef` rather than the full user object.
+</Callout>
+
+From this point on, anything downstream — services, Lucid hooks, the authz and filter libraries — can read `Context.userRef()` and `Context.tenantId()` with zero wiring.
+
+---
+
+## Why `enterWith`, not `run`
+
+This is the one design choice worth understanding, because it explains how a *middleware* can establish a context that survives into your *async handlers*.
+
+ALS gives you two ways to set a store:
+
+- **`Context.run(store, fn)`** runs `fn` with `store` active, and tears the store down the moment `fn` returns. It is callback-scoped: everything that should see the context must happen *inside* `fn`.
+- **`Context.enterWith(store)`** sets `store` as active for the **current** async execution and all its descendants, with no callback to wrap. The store persists after the call returns.
+
+An AdonisJS middleware calls `next()` and then **returns**. If it used `run()`, the context would be torn down the instant the middleware function exited — long before your async controller method or downstream middleware ever ran. So the built-in middleware uses `enterWith`: it enters the store and returns, and because the rest of the pipeline executes within the same async context tree, the controller, middleware, and handlers all see it.
+
+```ts
+// Conceptually, this is what the built-in ContextMiddleware does:
+Context.enterWith({ traceId, requestId })
+return next() // returns — but the context is still active for everything downstream
+```
+
+<Callout type="warn">
+  Use `Context.run()` when you own a clean callback boundary and want the context to disappear when the work finishes — for example, wrapping a single queue job or ace command. Use `Context.enterWith()` when there is no wrapping callback, as in middleware. See [Cross-Process](/docs/context/cross-process) for `run`-based patterns.
+</Callout>
+
+---
+
+## Next steps
+
+- [The Store](/docs/context/the-store) — the `ContextStore` shape and how to add your own typed fields
+- [Cross-Process](/docs/context/cross-process) — carry the context across queue and durable boundaries
+- [Customization](/docs/context/customization) — the five levels of customization, from custom fields to swapping the accessor
+- [Testing](/docs/context/testing) — run unit tests inside a fake store
