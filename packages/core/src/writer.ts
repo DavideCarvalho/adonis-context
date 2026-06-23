@@ -49,3 +49,35 @@ export const contextWriter: ContextWriter = {
  */
 export const CONTEXT_SET = Symbol.for('@agora/context:set');
 (globalThis as Record<symbol, unknown>)[CONTEXT_SET] = contextWriter.set;
+
+/**
+ * Run `fn` INSIDE a freshly-entered context store seeded from a full `snapshot`.
+ * Unlike {@link CONTEXT_SET} — which only populates an ALREADY-ACTIVE store, a
+ * no-op where none exists — this ESTABLISHES the store, so it is the primitive a
+ * worker with no active scope needs to restore a context before running work.
+ *
+ * The ENTIRE `snapshot` is preserved (including module-augmented keys other libs
+ * added to {@link ContextStore}); nothing is dropped — it is handed straight to
+ * {@link Context.run}. When `snapshot` is absent, `fn` runs with no active store.
+ */
+export function contextScope<T>(snapshot: Record<string, unknown> | undefined, fn: () => T): T {
+  if (snapshot === undefined) {
+    return fn();
+  }
+  // Run with the full snapshot so every key survives the round-trip. The cast
+  // bridges the open-ended snapshot to the ContextStore shape — a snapshot may
+  // legitimately carry module-augmented fields this package does not know about.
+  return Context.run(snapshot as unknown as ContextStore, fn);
+}
+
+/**
+ * The cross-copy-stable global slot the ecosystem RESTORES a context through.
+ * Counterpart to {@link CONTEXT_SET}, but SCOPED: where `set` writes into an
+ * active store, this one runs `fn` inside a store seeded from a snapshot — the
+ * primitive `@adonis-agora/durable` needs on a worker that has no active scope.
+ * Other Agora libs read `globalThis[Symbol.for('@agora/context:scope')]`
+ * STRUCTURALLY (no import) and degrade to `undefined` when it is absent.
+ * Published here at module load, mirroring {@link CONTEXT_SET}.
+ */
+export const CONTEXT_SCOPE = Symbol.for('@agora/context:scope');
+(globalThis as Record<symbol, unknown>)[CONTEXT_SCOPE] = contextScope;

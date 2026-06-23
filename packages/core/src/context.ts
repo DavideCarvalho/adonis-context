@@ -370,8 +370,16 @@ export const Context = {
     return config.serialize ? config.serialize(store) : defaultSerialize(store);
   },
 
-  /** Re-hydrate a context from a carrier and run `fn` inside it. */
-  deserialize<T>(carrier: ContextCarrier, fn: () => T): T {
+  /**
+   * Re-hydrate a context from a carrier and run `fn` inside it. Tolerates an
+   * absent carrier: when `carrier` is nullish (a job from an external producer,
+   * an older job that never serialized one) `fn` runs with NO active store
+   * instead of throwing — so a job that arrives without a carrier still works.
+   */
+  deserialize<T>(carrier: ContextCarrier | undefined, fn: () => T): T {
+    if (!carrier) {
+      return fn();
+    }
     return als.run(fromCarrier(carrier), fn);
   },
 

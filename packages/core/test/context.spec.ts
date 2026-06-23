@@ -139,6 +139,20 @@ describe('Context serialize/deserialize', () => {
       expect(Context.userRef()).toBeUndefined();
     });
   });
+
+  it('deserialize of an absent carrier runs fn with no active store (no throw)', () => {
+    // A job that arrives without a carrier (external producer, older job) must
+    // still run — fn executes with no active context rather than throwing.
+    let ran = false;
+    const result = Context.deserialize(undefined, () => {
+      ran = true;
+      expect(Context.get()).toBeUndefined();
+      expect(Context.traceId()).toBeUndefined();
+      return 'ok';
+    });
+    expect(ran).toBe(true);
+    expect(result).toBe('ok');
+  });
 });
 
 describe('Context.bind', () => {

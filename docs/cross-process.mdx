@@ -161,21 +161,39 @@ Arguments, `this`, and the return value all pass through unchanged. If nothing i
 
 The queue pattern above is manual because a raw queue is a third-party boundary. [`@adonis-agora/durable`](/docs/durable) is different: it is a **first-party Agora library**, and it propagates the context across the remote-step boundary **for you**. You write **zero** serialize/deserialize calls.
 
-When a workflow runs a remote step with `ctx.call(...)`, durable **snapshots the active Agora context onto the `RemoteTask`** as it dispatches, ships it across the transport to wherever the handler lives — another Node process, or even a Python worker — and **restores it before invoking the handler**. So inside a remote step:
+When a workflow runs a remote step with `ctx.call(...)`, durable **snapshots the active Agora context onto the `RemoteTask`** as it dispatches, ships it across the transport to wherever the handler lives — another Node process, or even a Python worker — and **restores it (via the scoped `@agora/context:scope` slot) before invoking the handler**.
 
-```ts title="A remote step on a durable worker"
+A remote step is two decoupled pieces that live in different processes: the **typed definition** (`remoteStep(...)`, imported wherever the workflow is authored) and the **handler** (registered separately on the worker-side transport). First the definition:
+
+```ts title="app/durable/steps.ts — the typed definition"
+import { remoteStep } from '@adonis-agora/durable'
+import { z } from 'zod'
+
+export const chargeCard = remoteStep({
+  name: 'payments.charge-card',
+  group: 'payments',
+  input: z.object({ orderId: z.string(), amountCents: z.number().int() }),
+  output: z.object({ chargeId: z.string() }),
+})
+
+// in the workflow body: const charge = await ctx.call(chargeCard, { orderId, amountCents })
+```
+
+The handler is registered **separately, on the worker-side transport** — a different process, which is exactly why durable has to restore the context there for you:
+
+```ts title="start/durable.ts (worker side) — the handler"
 import { Context } from '@adonis-agora/context'
 
-const chargeCard = engine.defineRemoteStep('charge-card', schema, async (input) => {
+transport.handle('payments.charge-card', async (input: { orderId: string; amountCents: number }) => {
   // No deserialize() here — durable already restored the originating request's context.
   Context.userRef()  // the user who started the workflow
   Context.tenantId() // their tenant
   Context.traceId()  // the originating request's trace id
-  return charge(input)
+  return { chargeId: await charge(input) }
 })
 ```
 
-The step sees the originating request's `userRef`, `tenantId` and `traceId` even though it runs in a different process. It knows not just *which trace* it belongs to but *who* and *which tenant* it is acting for — with no plumbing on your side.
+The handler sees the originating request's `userRef`, `tenantId` and `traceId` even though it runs in a different process. It knows not just *which trace* it belongs to but *who* and *which tenant* it is acting for — with no plumbing on your side.
 
 <Callout type="info" title="Durable: zero lines. A raw queue: two lines.">
   With `@adonis-agora/durable` you wire **nothing** — `ctx.call` carries and restores the context across the boundary on its own. With a raw `@adonisjs/queue` you wire **two lines**: `Context.serialize()` on dispatch and `Context.deserialize(...)` in the handler. Same snapshot semantics either way ([the carrier is dispatch-time history](#the-snapshot-caveat)); the only difference is who does the wiring.
@@ -193,7 +211,7 @@ const engine = new WorkflowEngine({
 })
 ```
 
-`toTraceparent` wraps the trace id into a `00-<traceId>-<spanId>-01` header (and, given the captured upstream parse, faithfully continues the incoming trace). Alongside it, the `RemoteTask` carries the tenant and `userRef` snapshot, which durable re-hydrates before running the step — which is why the handler above can read all three fields without touching `deserialize`. See the [durable docs](/docs/durable) for the full workflow story.
+`toTraceparent` wraps the trace id into a `00-<traceId>-<spanId>-01` header (and, given the captured upstream parse, faithfully continues the incoming trace). Alongside it, the `RemoteTask` carries the tenant and `userRef` snapshot, which durable re-hydrates by entering the scoped `@agora/context:scope` slot before running the handler — which is why the handler above can read all three fields without touching `deserialize`. See the [durable docs](/docs/durable) for the full workflow story.
 
 ---
 
