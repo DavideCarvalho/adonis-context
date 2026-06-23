@@ -40,14 +40,16 @@
     }
   },
   "files": ["dist/", "README.md", "CHANGELOG.md"],
-  "//sideEffects": "NOT false: context.ts holds the module-level singleton (AsyncLocalStorage + cross-boundary config), define_config.ts holds the middleware's population-options holder, and accessor.ts publishes the accessor on a Symbol.for() global slot AT IMPORT TIME (the ecosystem decoupling contract other libs read). All are process-global state a bundler told sideEffects:false could tree-shake. Pure modules (index, traceparent, baggage, middleware, provider) stay tree-shakeable.",
+  "//sideEffects": "NOT false: context.ts holds the module-level singleton (AsyncLocalStorage + cross-boundary config), define_config.ts holds the middleware's population-options holder, and accessor.ts / writer.ts publish the accessor (read) and writer (write) on Symbol.for() global slots AT IMPORT TIME (the ecosystem decoupling contracts other libs read/write). All are process-global state a bundler told sideEffects:false could tree-shake. Pure modules (index, traceparent, baggage, middleware, provider) stay tree-shakeable.",
   "sideEffects": [
     "**/context.js",
     "**/context.ts",
     "**/define_config.js",
     "**/define_config.ts",
     "**/accessor.js",
-    "**/accessor.ts"
+    "**/accessor.ts",
+    "**/writer.js",
+    "**/writer.ts"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json && pnpm run copy:stubs",

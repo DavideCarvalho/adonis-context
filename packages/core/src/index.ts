@@ -18,6 +18,8 @@ export {
 } from './baggage.js';
 export { CONTEXT_ACCESSOR, contextAccessor } from './accessor.js';
 export type { ContextAccessor } from './accessor.js';
+export { CONTEXT_SET, contextWriter } from './writer.js';
+export type { ContextWriter, ContextSetPatch } from './writer.js';
 export { defineConfig } from './define_config.js';
 export type { ContextConfig } from './define_config.js';
 export {

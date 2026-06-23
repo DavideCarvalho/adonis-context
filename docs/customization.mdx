@@ -232,6 +232,42 @@ export default class AppProvider {
 
 ---
 
+## Writing context from sibling libraries
+
+The accessor above is **read-only** on purpose. But some sibling libs need to *populate* the context — for example `@adonis-agora/authkit` setting the `userRef` after it authenticates a request. For that, `@adonis-agora/context` publishes a symmetric **write slot** on a `globalThis` slot keyed by `Symbol.for('@agora/context:set')`, exported as `CONTEXT_SET`.
+
+Like the accessor, it is wired at import time, so a sibling lib reads it **structurally** — no import of this package — and degrades to a no-op when it is absent. The slot value is a tiny writer that merges a patch into the **currently-active** store and is a safe **no-op when there is no active context** (it never throws):
+
+```ts
+type ContextSetPatch = { userRef?: UserRef; tenantId?: string; [k: string]: unknown }
+
+// The slot value:
+;(patch: ContextSetPatch) => void
+```
+
+A sibling lib consumes it structurally:
+
+```ts
+const set = (globalThis as any)[Symbol.for('@agora/context:set')] as
+  | ((patch: { userRef?: { type: string; id: string | number }; tenantId?: string }) => void)
+  | undefined
+
+// Degrades to a no-op when @adonis-agora/context is not installed.
+set?.({ userRef: { type: 'user', id: 42 } })
+```
+
+First-party code can import it directly instead:
+
+```ts
+import { contextWriter } from '@adonis-agora/context'
+
+contextWriter.set({ userRef: { type: 'user', id: 42 }, tenantId: 'acme' })
+```
+
+Under the hood the writer just calls `Context.set` per key, so the active-store lookup and the out-of-context no-op (with the one-shot warning) behave exactly as documented in [Level 2](#level-2--populate-fields-and-override-the-trace-id).
+
+---
+
 ## Next steps
 
 - [Cross-Process](/docs/context/cross-process) — the full story behind `serialize` / `deserialize`, `bind`, baggage, and the queue / durable patterns
