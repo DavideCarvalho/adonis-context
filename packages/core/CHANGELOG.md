@@ -1,5 +1,15 @@
 # @adonis-agora/context
 
+## 0.3.0
+
+### Minor Changes
+
+- [`efdb64e`](https://github.com/DavideCarvalho/adonis-context/commit/efdb64ed958d0748d01860a7cc4ce3e14659f2e7) - feat: publish scoped @agora/context:scope slot; deserialize tolerates absent carrier; fix cross-process docs examples
+
+### Patch Changes
+
+- [`c4091a4`](https://github.com/DavideCarvalho/adonis-context/commit/c4091a4acb222bc4a73bc0e348059f35dd1cdb6b) - Better cross-process docs: concrete @adonisjs/queue example + note durable auto-propagates context
+
 ## 0.2.0
 
 ### Minor Changes
