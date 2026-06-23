@@ -8,6 +8,8 @@ import { Callout } from 'fumadocs-ui/components/callout';
 
 This is the page that justifies the library. Reading the current user inside a single request is convenient; carrying that context **across a process or queue boundary** — so the `@adonisjs/queue` worker that processes a job knows who enqueued it, and the durable workflow step knows which tenant it belongs to — is the genuinely hard part. `@adonis-agora/context` solves it with two methods: `serialize()` and `deserialize()`.
 
+How much *you* wire depends on the boundary. Across a **raw queue** (a third-party boundary) you call those two methods yourself — two lines. Across [`@adonis-agora/durable`](/docs/durable) (a first-party Agora boundary) the context propagates **automatically** and you wire nothing. Both are covered below.
+
 ---
 
 ## Why ALS does not cross boundaries
@@ -54,35 +56,61 @@ Everything `fn` calls — synchronously or across `await`s within the callback �
 
 ---
 
-## The queue pattern
+## The `@adonisjs/queue` pattern
 
-The integration lives on the side that already owns the boundary — there is **no `@adonis-agora/context-queue` bridge package to install.** You wire two lines: one where you dispatch, one where you consume.
+A queue is a **third-party boundary**: `@adonisjs/queue` doesn't know about `@adonis-agora/context`, so there's no `@adonis-agora/context-queue` bridge package to install and nothing propagates automatically. Instead you wire the integration yourself — and it really is just **two lines**: one where you dispatch, one where you consume. The carrier travels as an ordinary field on the job payload.
 
-**On dispatch**, attach the carrier to the job payload:
+Here is the whole thing, end to end and copy-pasteable.
+
+**On dispatch**, snapshot the active context onto the job payload:
 
 ```ts title="app/services/invoice_service.ts"
 import queue from '@adonisjs/queue/services/main'
 import { Context } from '@adonis-agora/context'
 
-await queue.dispatch('send-invoice', {
-  ...payload,
-  __ctx: Context.serialize(), // snapshot the current context onto the job
-})
-```
+interface InvoicePayload {
+  invoiceId: number
+  email: string
+}
 
-**In the worker / job handler**, re-hydrate before running the real work:
-
-```ts title="app/jobs/send_invoice_job.ts"
-import { Context } from '@adonis-agora/context'
-
-export default class SendInvoiceJob {
-  async handle(payload: { __ctx?: ContextCarrier } & InvoicePayload) {
-    return Context.deserialize(payload.__ctx, () => this.send(payload))
+export default class InvoiceService {
+  async requestInvoice(payload: InvoicePayload) {
+    // Runs inside an HTTP request → there is an active context here.
+    await queue.dispatch('send-invoice', {
+      ...payload,
+      __ctx: Context.serialize(), // snapshot who/which tenant/which trace onto the job
+    })
   }
 }
 ```
 
-Inside `send(payload)`, `Context.userRef()` returns the principal who enqueued the job, `Context.tenantId()` returns their tenant, and `Context.traceId()` ties the worker's logs back to the originating request. Your handler code does not change at all — it reads the context exactly as it would inside an HTTP request.
+**In the job handler**, re-hydrate the carrier before running the real work:
+
+```ts title="app/jobs/send_invoice_job.ts"
+import { Context, type ContextCarrier } from '@adonis-agora/context'
+
+interface InvoicePayload {
+  invoiceId: number
+  email: string
+}
+
+export default class SendInvoiceJob {
+  // The worker is a fresh process: no active context until we restore one.
+  async handle(payload: InvoicePayload & { __ctx?: ContextCarrier }) {
+    return Context.deserialize(payload.__ctx, () => this.send(payload))
+  }
+
+  // Unchanged business logic — it reads context exactly as it would in a controller.
+  private async send(payload: InvoicePayload) {
+    // Context.userRef()  → the principal who enqueued the job
+    // Context.tenantId() → their tenant
+    // Context.traceId()  → ties this worker's logs back to the originating request
+    // ... resolve the invoice, render it, send the email ...
+  }
+}
+```
+
+That's the entire integration: `Context.serialize()` on the producer, `Context.deserialize(payload.__ctx, …)` on the consumer. Inside `send(payload)` the principal, tenant and trace id are those of the **enqueuer** — your handler code does not change at all, it reads the context exactly as it would inside an HTTP request.
 
 <Callout type="info">
   The `__ctx` key is just a convention for "this is the serialized context" — name it whatever you like, as long as the dispatch and consume sides agree. If a job arrives without a carrier (an external producer, an older job), `Context.deserialize` still works: see the [trace-id safety net](#the-trace-id-safety-net) below.
@@ -129,9 +157,33 @@ Arguments, `this`, and the return value all pass through unchanged. If nothing i
 
 ---
 
-## The durable integration
+## `@adonis-agora/durable` propagates context automatically
 
-For durable workflows, the context rides the **traceparent hook that already exists** rather than a bespoke channel. You feed the engine a function that turns the current trace id into a W3C `traceparent` header:
+The queue pattern above is manual because a raw queue is a third-party boundary. [`@adonis-agora/durable`](/docs/durable) is different: it is a **first-party Agora library**, and it propagates the context across the remote-step boundary **for you**. You write **zero** serialize/deserialize calls.
+
+When a workflow runs a remote step with `ctx.call(...)`, durable **snapshots the active Agora context onto the `RemoteTask`** as it dispatches, ships it across the transport to wherever the handler lives — another Node process, or even a Python worker — and **restores it before invoking the handler**. So inside a remote step:
+
+```ts title="A remote step on a durable worker"
+import { Context } from '@adonis-agora/context'
+
+const chargeCard = engine.defineRemoteStep('charge-card', schema, async (input) => {
+  // No deserialize() here — durable already restored the originating request's context.
+  Context.userRef()  // the user who started the workflow
+  Context.tenantId() // their tenant
+  Context.traceId()  // the originating request's trace id
+  return charge(input)
+})
+```
+
+The step sees the originating request's `userRef`, `tenantId` and `traceId` even though it runs in a different process. It knows not just *which trace* it belongs to but *who* and *which tenant* it is acting for — with no plumbing on your side.
+
+<Callout type="info" title="Durable: zero lines. A raw queue: two lines.">
+  With `@adonis-agora/durable` you wire **nothing** — `ctx.call` carries and restores the context across the boundary on its own. With a raw `@adonisjs/queue` you wire **two lines**: `Context.serialize()` on dispatch and `Context.deserialize(...)` in the handler. Same snapshot semantics either way ([the carrier is dispatch-time history](#the-snapshot-caveat)); the only difference is who does the wiring.
+</Callout>
+
+### How durable carries it: the traceparent hook
+
+Under the hood the trace id rides the **W3C `traceparent` hook that durable already exposes** rather than a bespoke channel. If you construct the engine yourself, feed it a function that turns the current trace id into a `traceparent` header:
 
 ```ts
 import { Context, toTraceparent } from '@adonis-agora/context'
@@ -141,7 +193,7 @@ const engine = new WorkflowEngine({
 })
 ```
 
-`toTraceparent` wraps the trace id into a `00-<traceId>-<spanId>-01` header (and, given the captured upstream parse, faithfully continues the incoming trace). From there the durable `RemoteTask` carries the carrier across to the worker — including a Python worker — which re-hydrates the snapshot before running the step. The tenant and `userRef` ride along, so a durable step knows not just *which trace* it belongs to but *who* and *which tenant* it is acting for.
+`toTraceparent` wraps the trace id into a `00-<traceId>-<spanId>-01` header (and, given the captured upstream parse, faithfully continues the incoming trace). Alongside it, the `RemoteTask` carries the tenant and `userRef` snapshot, which durable re-hydrates before running the step — which is why the handler above can read all three fields without touching `deserialize`. See the [durable docs](/docs/durable) for the full workflow story.
 
 ---
 
@@ -197,7 +249,9 @@ The cross-process story is small on purpose — three concepts:
 2. You ship the carrier however your boundary already ships data — a queue payload field, the durable traceparent hook, a W3C baggage header.
 3. `deserialize(carrier, fn)` re-enters the store and runs your work inside it, with a trace-id safety net.
 
-And one rule to remember: **the carrier is a snapshot taken at dispatch time, not a live link to the present.**
+Who does the wiring depends on the boundary: across [`@adonis-agora/durable`](/docs/durable) it's **automatic** (steps 1–3 happen for you inside `ctx.call`); across a raw `@adonisjs/queue` it's **two lines you write** (`serialize` on dispatch, `deserialize` in the handler).
+
+And one rule to remember: **the carrier is a snapshot taken at dispatch time, not a live link to the present** — true whether durable wires it or you do.
 
 ---
 
@@ -206,3 +260,4 @@ And one rule to remember: **the carrier is a snapshot taken at dispatch time, no
 - [Customization](/docs/context/customization#level-4--cross-process-carrier) — choose which fields travel, or override `serialize` / `deserialize` entirely
 - [The Store](/docs/context/the-store) — why the store carries refs, and the trace-id invariant
 - [Testing](/docs/context/testing) — build a context in tests for code that reads it after an `await`
+- [Durable](/docs/durable) — first-party workflows whose remote steps inherit the context automatically
