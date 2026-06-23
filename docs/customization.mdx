@@ -1,12 +1,12 @@
 ---
 title: Customization
-description: The five levels of customizing @agora/context — custom fields, populating values, non-HTTP entrypoints, the cross-process carrier, and swapping the accessor.
+description: The five levels of customizing @adonis-agora/context — custom fields, populating values, non-HTTP entrypoints, the cross-process carrier, and swapping the accessor.
 icon: SlidersHorizontal
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
 
-`@agora/context` is plug-and-play with sane defaults — `node ace configure` plus an empty `config/context.ts` works for most HTTP apps. But every layer is customizable, and the customization surface is organized as **five levels**, ordered from the most common to the most advanced. Nothing here is mandatory; reach for a level only when the default no longer fits.
+`@adonis-agora/context` is plug-and-play with sane defaults — `node ace configure` plus an empty `config/context.ts` works for most HTTP apps. But every layer is customizable, and the customization surface is organized as **five levels**, ordered from the most common to the most advanced. Nothing here is mandatory; reach for a level only when the default no longer fits.
 
 | Level | What you change | How (AdonisJS) | Default |
 |-------|-----------------|-----|---------|
@@ -25,9 +25,9 @@ Everything in levels 2 and 4 lives in the single `config/context.ts` file, valid
 Add typed fields to the store with module augmentation. This is covered in detail on [The Store](/docs/context/the-store#adding-your-own-typed-fields); the short version:
 
 ```ts title="types/context.ts"
-import '@agora/context'
+import '@adonis-agora/context'
 
-declare module '@agora/context' {
+declare module '@adonis-agora/context' {
   interface ContextStore {
     locale?: string
     impersonatorId?: string
@@ -44,7 +44,7 @@ Augmentation only declares the field. Populating it is Level 2.
 `config/context.ts` accepts hooks that the middleware runs at the start of every request. They let you control how the trace id is produced and pre-fill any store field (including your Level 1 custom fields). Every hook receives the AdonisJS `HttpContext`:
 
 ```ts title="config/context.ts"
-import { defineConfig, randomTraceId } from '@agora/context'
+import { defineConfig, randomTraceId } from '@adonis-agora/context'
 
 export default defineConfig({
   // Override how the trace id is produced for a request.
@@ -108,7 +108,7 @@ For values *derived* from the store (a `displayName` from `tenantId`, a region f
 The HTTP middleware is just the default. For a queue worker, an ace command, or any non-HTTP entrypoint, you don't need the middleware at all — you establish the context yourself with the public primitives:
 
 ```ts
-import { Context, randomTraceId } from '@agora/context'
+import { Context, randomTraceId } from '@adonis-agora/context'
 
 // e.g. an ace command or a scheduled task
 await Context.run(
@@ -175,7 +175,7 @@ The mechanics of `serialize()` / `deserialize()`, `bind()`, and the queue / dura
 </Callout>
 
 ```ts
-import { Context } from '@agora/context'
+import { Context } from '@adonis-agora/context'
 
 // In a test or multi-app harness, between apps:
 Context.resetConfig()
@@ -185,7 +185,7 @@ Context.resetConfig()
 
 ## Level 5 — Swapping the accessor
 
-Consumer libraries (authz, filter, diagnostics) do not import `Context` directly. Instead, at import time, `@agora/context` publishes a read-only **accessor** on a `globalThis` slot keyed by `Symbol.for('@agora/context:accessor')`, exported as `CONTEXT_ACCESSOR`. Consumers read that slot **structurally** — they never import this package — and degrade to `undefined` when it is absent.
+Consumer libraries (authz, filter, diagnostics) do not import `Context` directly. Instead, at import time, `@adonis-agora/context` publishes a read-only **accessor** on a `globalThis` slot keyed by `Symbol.for('@agora/context:accessor')`, exported as `CONTEXT_ACCESSOR`. Consumers read that slot **structurally** — they never import this package — and degrade to `undefined` when it is absent.
 
 The accessor surface is intentionally narrow — consumers *read*, they do not drive the lifecycle:
 
@@ -205,7 +205,7 @@ import {
   CONTEXT_ACCESSOR,
   type ContextAccessor,
   Context,
-} from '@agora/context'
+} from '@adonis-agora/context'
 
 export default class AppProvider {
   constructor(protected app: ApplicationService) {}

@@ -22,7 +22,7 @@ describe('Context', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     Context.set('userRef', { type: 'user', id: 1 });
     expect(warn).toHaveBeenCalledTimes(1);
-    expect(warn.mock.calls[0]?.[0]).toContain('[@agora/context]');
+    expect(warn.mock.calls[0]?.[0]).toContain('[@adonis-agora/context]');
     expect(warn.mock.calls[0]?.[0]).toContain('userRef');
     // one-shot: a second out-of-context set does not spam
     Context.set('tenantId', 't1');

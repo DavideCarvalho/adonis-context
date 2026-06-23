@@ -6,7 +6,7 @@ icon: Database
 
 import { Callout } from 'fumadocs-ui/components/callout';
 
-Everything `@agora/context` does revolves around one small interface: the `ContextStore`. It is the object held in `AsyncLocalStorage` for the lifetime of a request (or job, or command), and it is what every accessor reads from. Understanding its shape — and a couple of deliberate decisions baked into it — makes the rest of the library obvious.
+Everything `@adonis-agora/context` does revolves around one small interface: the `ContextStore`. It is the object held in `AsyncLocalStorage` for the lifetime of a request (or job, or command), and it is what every accessor reads from. Understanding its shape — and a couple of deliberate decisions baked into it — makes the rest of the library obvious.
 
 ---
 
@@ -38,7 +38,7 @@ Only `traceId` is required:
 You read these through the `Context` accessors rather than poking at the object directly:
 
 ```ts
-import { Context } from '@agora/context'
+import { Context } from '@adonis-agora/context'
 
 Context.traceId()  // string | undefined
 Context.tenantId() // string | undefined
@@ -90,7 +90,7 @@ import {
   parseTraceparent,
   randomTraceId,
   toTraceparent,
-} from '@agora/context'
+} from '@adonis-agora/context'
 
 // Pull just the trace-id out of a `traceparent` header (or a custom header):
 extractTraceparent(ctx.request.headers())          // '4bf9…4736' | undefined
@@ -120,9 +120,9 @@ The built-in fields cover identity, tenancy, and correlation — but your app pr
 This is what the docs call **Level 1** customization — declare an augmentation block once, anywhere your build includes (a `types/context.ts` or any module file):
 
 ```ts title="types/context.ts"
-import '@agora/context'
+import '@adonis-agora/context'
 
-declare module '@agora/context' {
+declare module '@adonis-agora/context' {
   interface ContextStore {
     locale?: string
     impersonatorId?: string

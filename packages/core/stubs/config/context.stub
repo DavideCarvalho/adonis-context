@@ -1,10 +1,10 @@
 {{{
   exports({ to: app.configPath('context.ts') })
 }}}
-import { defineConfig } from '@agora/context'
+import { defineConfig } from '@adonis-agora/context'
 
 /**
- * Configuration for `@agora/context`. Everything is optional — the defaults read
+ * Configuration for `@adonis-agora/context`. Everything is optional — the defaults read
  * the W3C `traceparent` header (random trace id when absent) and serialize a
  * carrier of `traceId` + `tenantId` + `userRef` across queue/durable boundaries.
  */

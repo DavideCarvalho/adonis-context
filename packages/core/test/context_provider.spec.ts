@@ -39,7 +39,7 @@ describe('ContextProvider', () => {
     expect(getContextHttpOptions()).toBe(config);
   });
 
-  it('does not throw when @agora/diagnostics is absent', async () => {
+  it('does not throw when @adonis-agora/diagnostics is absent', async () => {
     await expect(new ContextProvider(fakeApp({})).boot()).resolves.toBeUndefined();
   });
 });

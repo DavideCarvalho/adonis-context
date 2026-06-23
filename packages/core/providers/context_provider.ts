@@ -4,16 +4,16 @@ import { type ContextConfig, setContextHttpOptions } from '../src/define_config.
 import { wireContextIntoDiagnostics } from '../src/diagnostics_bridge.js';
 
 /**
- * Wires `@agora/context` into the AdonisJS application.
+ * Wires `@adonis-agora/context` into the AdonisJS application.
  *
  * `boot()` runs after config is loaded, so it reads `config/context.ts`, pushes
  * the cross-boundary subset onto the module-level singleton (`Context.configure`)
  * and stashes the population hooks for {@link ContextMiddleware} to read. It also
- * registers the trace accessor with `@agora/diagnostics` when that optional peer
+ * registers the trace accessor with `@adonis-agora/diagnostics` when that optional peer
  * is present.
  *
  * The per-request context itself is established by the server middleware, which
- * `node ace configure @agora/context` registers on the `server` stack.
+ * `node ace configure @adonis-agora/context` registers on the `server` stack.
  */
 export default class ContextProvider {
   constructor(protected app: ApplicationService) {}

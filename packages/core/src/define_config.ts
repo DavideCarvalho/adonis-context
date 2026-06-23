@@ -77,7 +77,7 @@ export interface ContextConfig {
  * inference. Mirrors AdonisJS's own `defineConfig` convention.
  *
  * ```ts
- * import { defineConfig } from '@agora/context'
+ * import { defineConfig } from '@adonis-agora/context'
  * export default defineConfig({ traceHeader: 'traceparent' })
  * ```
  */

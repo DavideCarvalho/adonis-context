@@ -1,6 +1,6 @@
 ---
 title: Getting Started
-description: Configure @agora/context, read the traceId anywhere, and populate the user and tenant from your auth layer.
+description: Configure @adonis-agora/context, read the traceId anywhere, and populate the user and tenant from your auth layer.
 icon: Rocket
 ---
 
@@ -8,7 +8,7 @@ import { Steps, Step } from 'fumadocs-ui/components/steps';
 import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
 import { Callout } from 'fumadocs-ui/components/callout';
 
-Getting `@agora/context` running is two steps: configure the package once, then start reading the context anywhere in your app. From there, your auth layer drops the current user and tenant into the store so the rest of your code — and the rest of the ecosystem — can read them.
+Getting `@adonis-agora/context` running is two steps: configure the package once, then start reading the context anywhere in your app. From there, your auth layer drops the current user and tenant into the store so the rest of your code — and the rest of the ecosystem — can read them.
 
 ---
 
@@ -28,17 +28,17 @@ The package ships an ace `configure` hook, so the recommended flow is a single c
 <Tab value="node ace add">
 
 ```sh
-node ace add @agora/context
+node ace add @adonis-agora/context
 ```
 
-`add` installs the package with your detected package manager and then runs `node ace configure @agora/context` for you.
+`add` installs the package with your detected package manager and then runs `node ace configure @adonis-agora/context` for you.
 
 </Tab>
 <Tab value="manual">
 
 ```sh
-npm i @agora/context
-node ace configure @agora/context
+npm i @adonis-agora/context
+node ace configure @adonis-agora/context
 ```
 
 Install first, then run `configure` yourself.
@@ -48,8 +48,8 @@ Install first, then run `configure` yourself.
 
 `configure` runs three codemods so there is **zero manual wiring**:
 
-1. registers the service provider (`@agora/context/context_provider`) in `adonisrc.ts`;
-2. registers the context middleware (`@agora/context/context_middleware`) on the **`server`** middleware stack;
+1. registers the service provider (`@adonis-agora/context/context_provider`) in `adonisrc.ts`;
+2. registers the context middleware (`@adonis-agora/context/context_middleware`) on the **`server`** middleware stack;
 3. publishes `config/context.ts` from a stub.
 
 <Callout type="info">
@@ -59,7 +59,7 @@ Install first, then run `configure` yourself.
 The published config is all-optional and commented out — the defaults work out of the box:
 
 ```ts title="config/context.ts"
-import { defineConfig } from '@agora/context'
+import { defineConfig } from '@adonis-agora/context'
 
 export default defineConfig({
   // traceHeader: 'traceparent',
@@ -77,7 +77,7 @@ Every key on `defineConfig` is covered in [Customization](/docs/context/customiz
 `Context` is a plain singleton — import it and call its accessors. No injection, no `app.container.make` required, which is the whole point: it works in services, middleware, Lucid hooks, event listeners, and plain functions alike.
 
 ```ts
-import { Context } from '@agora/context'
+import { Context } from '@adonis-agora/context'
 
 Context.traceId()  // string | undefined — the request correlation id
 Context.tenantId() // string | undefined — the active tenant
@@ -89,7 +89,7 @@ Every accessor returns `undefined` when called **outside** any context (for exam
 
 ```ts title="app/services/order_service.ts"
 import logger from '@adonisjs/core/services/logger'
-import { Context } from '@agora/context'
+import { Context } from '@adonis-agora/context'
 
 export class OrderService {
   async place(order: Order) {
@@ -108,7 +108,7 @@ The middleware establishes the context and the trace id, but it deliberately doe
 ```ts title="app/middleware/stamp_context_middleware.ts"
 import type { HttpContext } from '@adonisjs/core/http'
 import type { NextFn } from '@adonisjs/core/types/http'
-import { Context } from '@agora/context'
+import { Context } from '@adonis-agora/context'
 
 export default class StampContextMiddleware {
   async handle(ctx: HttpContext, next: NextFn) {

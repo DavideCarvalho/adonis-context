@@ -8,7 +8,7 @@ import { Callout } from 'fumadocs-ui/components/callout';
 import { Steps, Step } from 'fumadocs-ui/components/steps';
 import { Cards, Card } from 'fumadocs-ui/components/card';
 
-`@agora/context` is a small piece of plumbing with an outsized payoff: a single, process-wide [`AsyncLocalStorage`](https://nodejs.org/api/async_context.html#class-asynclocalstorage) (ALS) store that carries the **current user**, the **current tenant**, and a **trace id** through every layer of your app — controllers, services, middleware, Lucid model hooks, queue workers, durable steps, and plain functions — without you threading those values through method signatures.
+`@adonis-agora/context` is a small piece of plumbing with an outsized payoff: a single, process-wide [`AsyncLocalStorage`](https://nodejs.org/api/async_context.html#class-asynclocalstorage) (ALS) store that carries the **current user**, the **current tenant**, and a **trace id** through every layer of your app — controllers, services, middleware, Lucid model hooks, queue workers, durable steps, and plain functions — without you threading those values through method signatures.
 
 It is deliberately unglamorous. Most of the time you will not call it directly at all. You wire it once with `node ace configure`, your auth layer drops a `userRef` into it, and from then on the rest of the Agora ecosystem reads from it for free.
 
@@ -29,7 +29,7 @@ Because `HttpContext` **only lives inside an HTTP request**. `HttpContext.getOrF
 - an ace command run from cron,
 - a Lucid model hook firing during a seeder.
 
-`@agora/context` is the thin, **serializable** layer that crosses the boundaries `HttpContext` cannot. It runs identically inside and outside HTTP, and — crucially — it is read from a module-level singleton, so code that the IoC container never touches can still reach it.
+`@adonis-agora/context` is the thin, **serializable** layer that crosses the boundaries `HttpContext` cannot. It runs identically inside and outside HTTP, and — crucially — it is read from a module-level singleton, so code that the IoC container never touches can still reach it.
 
 <Callout type="info">
   Think of it as the **`reflect-metadata` of the ecosystem**: nearly everything depends on it, almost nobody calls it by hand. If you have used Laravel's [`Context`](https://laravel.com/docs/12.x/context) facade, this is the same idea, expressed for AdonisJS — but built to travel across processes.
@@ -47,7 +47,7 @@ Install, configure, set the user once, read it anywhere. For the full setup (ten
 Install and configure — the codemod registers the provider, plugs the middleware onto the `server` stack, and publishes `config/context.ts`:
 
 ```sh
-node ace add @agora/context
+node ace add @adonis-agora/context
 ```
 
 </Step>
@@ -56,7 +56,7 @@ node ace add @agora/context
 The middleware now seeds a fresh context (with a `traceId`) on every request automatically. Drop the current user in from your auth layer once you've authenticated the request:
 
 ```ts
-import { Context } from '@agora/context'
+import { Context } from '@adonis-agora/context'
 
 Context.set('userRef', { type: 'user', id: user.id })
 // Context.set('tenantId', user.tenantId) // if you're multi-tenant
@@ -68,7 +68,7 @@ Context.set('userRef', { type: 'user', id: user.id })
 Read it anywhere downstream — in a service, a Lucid hook, an event listener, even outside the container:
 
 ```ts
-import { Context } from '@agora/context'
+import { Context } from '@adonis-agora/context'
 
 Context.userRef()  // { type: 'user', id: 42 }
 Context.tenantId() // the active tenant, if set
@@ -84,7 +84,7 @@ Context.traceId()  // correlates logs, spans and workflows for this request
 
 In a typical AdonisJS app, "who is the current user?" and "which tenant are we serving?" are answered either by passing `ctx.auth.user` down through every call, or by reaching for `HttpContext.getOrFail()`. The first is prop-drilling; the second only works inside the request and throws everywhere else.
 
-`@agora/context` sidesteps both:
+`@adonis-agora/context` sidesteps both:
 
 - **Any code can read it** — injectable or not. Lucid model hooks, plain helper functions, and queue handlers all call the same `Context.traceId()` / `Context.tenantId()` / `Context.userRef()`.
 - **No prop-drilling.** You stop passing `currentUser` down through five service calls just so the bottom one can stamp an audit row.
@@ -104,13 +104,13 @@ The store carries a handful of values the rest of the libraries care about, expo
 
 Notice the pattern: **the context library never decides anything.** It does not authenticate, it does not pick a tenant, it does not log. Some other layer resolves those values and *sets* them; this library is the shared place they live so everyone else can *read* them.
 
-Consumer libraries don't even import `@agora/context` — they read a read-only accessor that this package publishes on a `globalThis` slot at import time, and **degrade cleanly when it is absent**. Adding `@agora/context` lights them up; removing it does not break them. See [Customization → swapping the accessor](/docs/context/customization#level-5--swapping-the-accessor).
+Consumer libraries don't even import `@adonis-agora/context` — they read a read-only accessor that this package publishes on a `globalThis` slot at import time, and **degrade cleanly when it is absent**. Adding `@adonis-agora/context` lights them up; removing it does not break them. See [Customization → swapping the accessor](/docs/context/customization#level-5--swapping-the-accessor).
 
 ---
 
 ## It is worth installing on its own
 
-Even with no other ecosystem library in your project, `@agora/context` earns its keep. The standalone pitch is one sentence:
+Even with no other ecosystem library in your project, `@adonis-agora/context` earns its keep. The standalone pitch is one sentence:
 
 > **The current user, tenant and trace id, anywhere — including queue workers and ace commands — without prop-drilling and without `HttpContext.getOrFail()` throwing on you.**
 

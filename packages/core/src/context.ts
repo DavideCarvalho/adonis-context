@@ -25,7 +25,7 @@ export interface UserRef {
  * Open for extension via module augmentation — other ecosystem libs add fields:
  *
  * ```ts
- * declare module '@agora/context' {
+ * declare module '@adonis-agora/context' {
  *   interface ContextStore {
  *     locale?: string;
  *   }
@@ -156,7 +156,7 @@ function ensureTraceId(store: ContextStore): ContextStore {
     if (!warnedMissingTraceId) {
       warnedMissingTraceId = true;
       console.warn(
-        '[@agora/context] Received a carrier with no traceId; generating a ' +
+        '[@adonis-agora/context] Received a carrier with no traceId; generating a ' +
           'fresh one to preserve the ContextStore.traceId invariant.',
       );
     }
@@ -250,7 +250,7 @@ export const Context = {
     if (!warnedSetOutsideContext) {
       warnedSetOutsideContext = true;
       console.warn(
-        `[@agora/context] Context.set(${String(key)}, …) was called with no active context, so it was a no-op and the value was dropped. This usually means the code (e.g. an auth guard) ran on a path the ContextMiddleware did not cover, or outside any Context.run/enterWith scope. Ensure the context is established first. This warning fires once per process.`,
+        `[@adonis-agora/context] Context.set(${String(key)}, …) was called with no active context, so it was a no-op and the value was dropped. This usually means the code (e.g. an auth guard) ran on a path the ContextMiddleware did not cover, or outside any Context.run/enterWith scope. Ensure the context is established first. This warning fires once per process.`,
       );
     }
   },
@@ -339,7 +339,7 @@ export const Context = {
 
     if (configured && configsConflict(config, replacement)) {
       console.warn(
-        '[@agora/context] Context.configure() called a second time with a ' +
+        '[@adonis-agora/context] Context.configure() called a second time with a ' +
           'different config. The config is process-global and is replaced ' +
           'wholesale — the last forRoot wins. In multi-app or multi-test setups ' +
           'call Context.resetConfig() between apps/tests. See DESIGN §4.1.',

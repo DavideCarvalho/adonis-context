@@ -1,5 +1,5 @@
 {
-  "name": "@agora/context",
+  "name": "@adonis-agora/context",
   "version": "0.1.0",
   "description": "Shared AsyncLocalStorage context for AdonisJS — carries user/tenant/traceId across the request and the Agora ecosystem.",
   "license": "MIT",

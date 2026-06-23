@@ -1,7 +1,7 @@
-# `@agora/context` — DESIGN
+# `@adonis-agora/context` — DESIGN
 
 > Port of `@dudousxd/nestjs-context` (the **aviary** ecosystem) to AdonisJS.
-> First lib of the **Agora** ecosystem. Foundation of `@agora/authz`, consumed by
+> First lib of the **Agora** ecosystem. Foundation of `@adonis-agora/authz`, consumed by
 > diagnostics / telescope / filter / durable.
 
 ## 1. O que é (papel × distribuição)
@@ -12,11 +12,11 @@ flui por todas as libs do ecossistema.
 - **Papel:** plumbing/infra — o dev quase não chama direto; quem consome são as
   outras libs (authz lê `userRef()`, filter lê `tenantId()`, telescope/durable
   correlacionam por `traceId()`).
-- **Distribuição:** pública e publicada (`@agora/context`). Tem API própria que o
+- **Distribuição:** pública e publicada (`@adonis-agora/context`). Tem API própria que o
   app usa direto. Análogo: `Context` do Laravel / `HttpContext` do AdonisJS.
 - **Por que não basta o `HttpContext`?** O `HttpContext` do Adonis v7 já tem ALS
   nativo (`useAsyncLocalStorage: true` → `HttpContext.getOrFail()`), **mas só
-  vale dentro do request HTTP** — `getOrFail()` lança fora dele. O `@agora/context`
+  vale dentro do request HTTP** — `getOrFail()` lança fora dele. O `@adonis-agora/context`
   é a camada fina e serializável que **atravessa as fronteiras que o HttpContext
   não cruza**: workers de fila (`@adonisjs/queue`), durable, ace commands e ORM
   hooks. Roda idêntico dentro e fora de HTTP, e é lido fora do container.
@@ -32,7 +32,7 @@ export interface ContextStore {
   userRef?: { type: string; id: string | number };
   tenantId?: string;
 }
-// libs estendem: declare module '@agora/context' { interface ContextStore { ... } }
+// libs estendem: declare module '@adonis-agora/context' { interface ContextStore { ... } }
 
 export const Context = {
   run, enterWith, get, set, bind,
@@ -75,7 +75,7 @@ async handle(ctx: HttpContext, next: NextFn) {
   cross-boundary pro singleton (`Context.configure`) e entrega as HTTP-options pro
   middleware via um holder de módulo (`setContextHttpOptions`); registra o
   diagnostics-bridge.
-- **`node ace configure @agora/context`**: codemods registram o provider em
+- **`node ace configure @adonis-agora/context`**: codemods registram o provider em
   `adonisrc.ts`, plugam o middleware na stack `server` e publicam o
   `config/context.ts` de um stub. Zero fiação manual.
 
@@ -83,7 +83,7 @@ async handle(ctx: HttpContext, next: NextFn) {
 
 | Nível | Como (Adonis) | Default |
 |---|---|---|
-| 1 campos próprios | `declare module '@agora/context'` (module augmentation) | — |
+| 1 campos próprios | `declare module '@adonis-agora/context'` (module augmentation) | — |
 | 2 popular / traceId | `traceId(ctx)` / `initialize(ctx)` no `defineConfig` | traceparent → random |
 | 3 não-HTTP | não plugar o middleware + `Context.run()`/`enterWith()` no command/worker | middleware `server` |
 | 4 carrier | `carrier:[]` / `serialize`+`deserialize` no `defineConfig` | traceId+tenantId+userRef |
@@ -113,15 +113,15 @@ de quem já produz a fronteira**, com detecção opcional — **não** em pacote
 
 Como é singleton de módulo, as libs leem `Context.traceId()` / `Context.userRef()`
 direto e **degradam limpo** se ausente (`?.`). Sem `@Optional() @Inject` como no
-Nest — no Adonis é só import. O binding no container (`@agora/context`) existe só
+Nest — no Adonis é só import. O binding no container (`@adonis-agora/context`) existe só
 pra trocar/mockar em teste (`app.container.swap`).
 
 ## 7. Pacotes
 
-- `@agora/context` — núcleo (ALS + middleware + provider + config + serialize +
+- `@adonis-agora/context` — núcleo (ALS + middleware + provider + config + serialize +
   baggage + traceparent)
-- `@agora/context/testing` — `runWithContext()` / `enterContext()` p/ rodar código
-  num store fake (subpath do pacote `@agora/context`)
+- `@adonis-agora/context/testing` — `runWithContext()` / `enterContext()` p/ rodar código
+  num store fake (subpath do pacote `@adonis-agora/context`)
 
 ## 8. Não-objetivos
 

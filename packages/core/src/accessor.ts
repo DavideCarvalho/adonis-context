@@ -22,10 +22,10 @@ export const contextAccessor: ContextAccessor = {
 
 /**
  * The cross-copy-stable global slot the ecosystem reads the accessor from. Other
- * Agora libs (e.g. `@agora/resilience` for per-tenant circuit keys) read
+ * Agora libs (e.g. `@adonis-agora/resilience` for per-tenant circuit keys) read
  * `globalThis[Symbol.for('@agora/context:accessor')]` STRUCTURALLY so they never
- * have to import `@agora/context` — they degrade to `undefined` when it is
- * absent. Published here at module load so merely importing `@agora/context`
+ * have to import `@adonis-agora/context` — they degrade to `undefined` when it is
+ * absent. Published here at module load so merely importing `@adonis-agora/context`
  * (which every app that installs it does, via the provider) wires the contract.
  */
 export const CONTEXT_ACCESSOR = Symbol.for('@agora/context:accessor');

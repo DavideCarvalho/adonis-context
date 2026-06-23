@@ -6,7 +6,7 @@ icon: Network
 
 import { Callout } from 'fumadocs-ui/components/callout';
 
-This is the page that justifies the library. Reading the current user inside a single request is convenient; carrying that context **across a process or queue boundary** — so the `@adonisjs/queue` worker that processes a job knows who enqueued it, and the durable workflow step knows which tenant it belongs to — is the genuinely hard part. `@agora/context` solves it with two methods: `serialize()` and `deserialize()`.
+This is the page that justifies the library. Reading the current user inside a single request is convenient; carrying that context **across a process or queue boundary** — so the `@adonisjs/queue` worker that processes a job knows who enqueued it, and the durable workflow step knows which tenant it belongs to — is the genuinely hard part. `@adonis-agora/context` solves it with two methods: `serialize()` and `deserialize()`.
 
 ---
 
@@ -56,13 +56,13 @@ Everything `fn` calls — synchronously or across `await`s within the callback �
 
 ## The queue pattern
 
-The integration lives on the side that already owns the boundary — there is **no `@agora/context-queue` bridge package to install.** You wire two lines: one where you dispatch, one where you consume.
+The integration lives on the side that already owns the boundary — there is **no `@adonis-agora/context-queue` bridge package to install.** You wire two lines: one where you dispatch, one where you consume.
 
 **On dispatch**, attach the carrier to the job payload:
 
 ```ts title="app/services/invoice_service.ts"
 import queue from '@adonisjs/queue/services/main'
-import { Context } from '@agora/context'
+import { Context } from '@adonis-agora/context'
 
 await queue.dispatch('send-invoice', {
   ...payload,
@@ -73,7 +73,7 @@ await queue.dispatch('send-invoice', {
 **In the worker / job handler**, re-hydrate before running the real work:
 
 ```ts title="app/jobs/send_invoice_job.ts"
-import { Context } from '@agora/context'
+import { Context } from '@adonis-agora/context'
 
 export default class SendInvoiceJob {
   async handle(payload: { __ctx?: ContextCarrier } & InvoicePayload) {
@@ -96,7 +96,7 @@ A cron-triggered ace command has no HTTP request, so no context is established f
 
 ```ts title="commands/reconcile.ts"
 import { BaseCommand } from '@adonisjs/core/ace'
-import { Context, randomTraceId } from '@agora/context'
+import { Context, randomTraceId } from '@adonis-agora/context'
 
 export default class Reconcile extends BaseCommand {
   static commandName = 'reconcile'
@@ -119,7 +119,7 @@ export default class Reconcile extends BaseCommand {
 ALS follows the async tree, but a few constructs break the chain: callbacks registered *now* but invoked *later* outside the originating async context — `setTimeout`/`setInterval`, `EventEmitter` listeners, and some job callbacks. `Context.bind(fn)` snapshots whatever context is active at bind time and re-enters it every time the wrapped function later runs:
 
 ```ts
-import { Context } from '@agora/context'
+import { Context } from '@adonis-agora/context'
 
 emitter.on('done', Context.bind(() => log(Context.traceId())))
 setTimeout(Context.bind(handler), 1000)
@@ -134,7 +134,7 @@ Arguments, `this`, and the return value all pass through unchanged. If nothing i
 For durable workflows, the context rides the **traceparent hook that already exists** rather than a bespoke channel. You feed the engine a function that turns the current trace id into a W3C `traceparent` header:
 
 ```ts
-import { Context, toTraceparent } from '@agora/context'
+import { Context, toTraceparent } from '@adonis-agora/context'
 
 const engine = new WorkflowEngine({
   traceparent: () => toTraceparent(Context.traceId()!, Context.get()?.traceparent),
@@ -150,7 +150,7 @@ const engine = new WorkflowEngine({
 Alongside the bespoke `ContextCarrier`, the context can ride a real [W3C `baggage`](https://www.w3.org/TR/baggage/) header that any baggage-aware peer (OpenTelemetry SDKs, gateways) understands. This is opt-in and independent of the carrier path.
 
 ```ts
-import { Context } from '@agora/context'
+import { Context } from '@adonis-agora/context'
 
 // Build a baggage header from the active context (maps tenantId + userRef):
 const header = Context.toBaggage() // 'tenantId=t1,userRef=user%3A42' | undefined

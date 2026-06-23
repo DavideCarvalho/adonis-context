@@ -1,19 +1,19 @@
-# `@agora/context`
+# `@adonis-agora/context`
 
 > Shared AsyncLocalStorage context for **AdonisJS** — carries `user` / `tenant` /
 > `traceId` across the request **and** the [Agora](#the-agora-ecosystem)
 > ecosystem (HTTP, queue workers, durable, ace commands).
 
 AdonisJS already ships an ALS-backed `HttpContext` — but it only lives **inside an
-HTTP request** (`HttpContext.getOrFail()` throws outside one). `@agora/context` is
+HTTP request** (`HttpContext.getOrFail()` throws outside one). `@adonis-agora/context` is
 the thin, serializable layer that crosses the boundaries `HttpContext` can't:
 `@adonisjs/queue` workers, durable workflows, ace commands, and ORM hooks.
 
 ## Install
 
 ```sh
-npm i @agora/context
-node ace configure @agora/context
+npm i @adonis-agora/context
+node ace configure @adonis-agora/context
 ```
 
 `configure` registers the provider, plugs the context middleware onto the `server`
@@ -22,7 +22,7 @@ stack, and publishes `config/context.ts`.
 ## Use
 
 ```ts
-import { Context } from '@agora/context'
+import { Context } from '@adonis-agora/context'
 
 // anywhere — HTTP handler, service, queue worker, ace command:
 Context.traceId()   // current trace id
@@ -48,13 +48,13 @@ cross-boundary semantics, W3C baggage).
 
 | Entry point | What |
 |---|---|
-| [`@agora/context`](./packages/core) | core — ALS, middleware, provider, config, serialize, baggage, traceparent |
-| [`@agora/context/testing`](./packages/core/src/testing) | `runWithContext()` / `enterContext()` test helpers |
+| [`@adonis-agora/context`](./packages/core) | core — ALS, middleware, provider, config, serialize, baggage, traceparent |
+| [`@adonis-agora/context/testing`](./packages/core/src/testing) | `runWithContext()` / `enterContext()` test helpers |
 
 ## The Agora ecosystem
 
 Agora is the AdonisJS port of the [aviary](https://github.com/DavideCarvalho?tab=repositories)
-NestJS ecosystem. `@agora/context` is the foundation other Agora libs build on
+NestJS ecosystem. `@adonis-agora/context` is the foundation other Agora libs build on
 (diagnostics, telescope, authz, filter, durable).
 
 ## License
