@@ -1,4 +1,4 @@
-import { Context, type ContextStore, type UserRef } from './context.js';
+import { Context, type ContextStore, type UserRef, ensureTraceId } from './context.js';
 
 /**
  * The patch a {@link ContextWriter} merges into the active store. The known
@@ -67,7 +67,13 @@ export function contextScope<T>(snapshot: Record<string, unknown> | undefined, f
   // Run with the full snapshot so every key survives the round-trip. The cast
   // bridges the open-ended snapshot to the ContextStore shape — a snapshot may
   // legitimately carry module-augmented fields this package does not know about.
-  return Context.run(snapshot as unknown as ContextStore, fn);
+  // A snapshot may arrive missing/empty `traceId` (e.g. a hand-built scope, or
+  // one produced by a different runtime). Route it through `ensureTraceId` —
+  // exactly as `deserialize`/`fromCarrier` do for incoming carriers — so the
+  // `ContextStore.traceId: string` invariant is upheld and never silently
+  // produces an invalid store.
+  const store = ensureTraceId(snapshot as unknown as ContextStore);
+  return Context.run(store, fn);
 }
 
 /**

@@ -63,6 +63,24 @@ describe('contextScope', () => {
     });
   });
 
+  it('mints a traceId when the snapshot has none, upholding the invariant', () => {
+    // A snapshot with no traceId must still yield an active store with a valid
+    // traceId inside fn — mirroring deserialize/fromCarrier's ensureTraceId path.
+    contextScope({}, () => {
+      const traceId = contextAccessor.traceId();
+      expect(typeof traceId).toBe('string');
+      expect(traceId).toBeTruthy();
+    });
+
+    // Same guard for an explicitly empty traceId.
+    contextScope({ traceId: '', tenantId: 'acme' }, () => {
+      const traceId = contextAccessor.traceId();
+      expect(typeof traceId).toBe('string');
+      expect(traceId).toBeTruthy();
+      expect(contextAccessor.tenantId()).toBe('acme');
+    });
+  });
+
   it('runs fn with no active store when snapshot is absent', () => {
     let ran = false;
     const result = contextScope(undefined, () => {

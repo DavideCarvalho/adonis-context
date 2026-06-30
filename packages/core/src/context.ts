@@ -147,7 +147,7 @@ let warnedMissingTraceId = false;
 /** One-shot guard so the out-of-context `set` warning is not spammed. */
 let warnedSetOutsideContext = false;
 
-function ensureTraceId(store: ContextStore): ContextStore {
+export function ensureTraceId(store: ContextStore): ContextStore {
   // A cross-process carrier may arrive missing/empty `traceId` (e.g. produced by
   // a different runtime). The ContextStore.traceId invariant is `string`, so we
   // synthesize one rather than propagate `undefined` (which breaks telescope/
