@@ -1,5 +1,11 @@
 # @adonis-agora/context
 
+## 0.3.1
+
+### Patch Changes
+
+- [`b3cdb20`](https://github.com/DavideCarvalho/adonis-context/commit/b3cdb20f570ccdffd527662407e7d557d5ccdc91) - fix: sync VERSION literal via sync-version guard; contextScope upholds the traceId invariant
+
 ## 0.3.0
 
 ### Minor Changes
