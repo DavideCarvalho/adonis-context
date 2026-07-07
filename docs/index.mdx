@@ -20,7 +20,7 @@ It is deliberately unglamorous. Most of the time you will not call it directly a
 
 ## Why not just `HttpContext`?
 
-AdonisJS v6 already ships an ALS-backed `HttpContext` — enable `useAsyncLocalStorage` and `HttpContext.getOrFail()` reaches the current request from anywhere. So why a second store?
+AdonisJS already ships an ALS-backed `HttpContext` — enable `useAsyncLocalStorage` and `HttpContext.getOrFail()` reaches the current request from anywhere. So why a second store?
 
 Because `HttpContext` **only lives inside an HTTP request**. `HttpContext.getOrFail()` throws the moment you step outside one — and the whole point of this library is the work that happens *outside* the request:
 
