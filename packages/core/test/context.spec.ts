@@ -1,6 +1,13 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Context, type ContextCarrier, type ContextStore } from '../src/index.js';
 
+// Augment the store with a derived field the lazy tests memoize onto it.
+declare module '../src/index.js' {
+  interface ContextStore {
+    displayName?: string;
+  }
+}
+
 describe('Context', () => {
   it('returns undefined when read outside any context', () => {
     expect(Context.get()).toBeUndefined();
@@ -198,6 +205,46 @@ describe('Context.bind', () => {
     const bound = Context.run({ traceId: 'first' }, () => Context.bind(() => Context.traceId()));
     const seen = Context.run({ traceId: 'second' }, () => bound());
     expect(seen).toBe('first');
+  });
+});
+
+describe('Context.lazy (computed on first access, memoized per store)', () => {
+  it('computes once and caches on the active store', () => {
+    const factory = vi.fn((store: ContextStore) => `name-${store.tenantId}`);
+    Context.run({ traceId: 'x', tenantId: 'acme' }, () => {
+      const a = Context.lazy('displayName', factory);
+      const b = Context.lazy('displayName', factory);
+      expect(a).toBe('name-acme');
+      expect(b).toBe('name-acme');
+      // Memoized: factory ran exactly once.
+      expect(factory).toHaveBeenCalledTimes(1);
+      // Cached onto the store field.
+      expect(Context.get()?.displayName).toBe('name-acme');
+    });
+  });
+
+  it('recomputes in a different context (cache is per store)', () => {
+    const factory = (store: ContextStore) => `name-${store.tenantId}`;
+    const first = Context.run({ traceId: 'x', tenantId: 'a' }, () =>
+      Context.lazy('displayName', factory),
+    );
+    const second = Context.run({ traceId: 'y', tenantId: 'b' }, () =>
+      Context.lazy('displayName', factory),
+    );
+    expect(first).toBe('name-a');
+    expect(second).toBe('name-b');
+  });
+
+  it('returns undefined outside any context (no store to cache on)', () => {
+    expect(Context.lazy('displayName', () => 'x')).toBeUndefined();
+  });
+
+  it('an already-present field short-circuits the factory', () => {
+    const factory = vi.fn(() => 'computed');
+    Context.run({ traceId: 'x', displayName: 'preset' }, () => {
+      expect(Context.lazy('displayName', factory)).toBe('preset');
+      expect(factory).not.toHaveBeenCalled();
+    });
   });
 });
 
