@@ -1,5 +1,12 @@
 # @adonis-agora/context
 
+## 0.3.2
+
+### Patch Changes
+
+- Export the `configure` hook from the package root so `node ace configure @adonis-agora/context` resolves it (ace imports the package root and looks for a `configure` export). Previously it lived only on the `./configure` subpath and ace could not find it.
+- Remove markdown backticks from the published config stub comments; the AdonisJS (tempura) stub renderer treats the stub body as a template literal, so a stray backtick broke `node ace configure`.
+
 ## 0.3.1
 
 ### Patch Changes

@@ -1,5 +1,5 @@
 /** Keep in sync with this package's `version` in package.json. */
-export const VERSION = '0.3.1';
+export const VERSION = '0.3.2';
 
 export { Context } from './context.js';
 export type {
@@ -29,3 +29,6 @@ export {
   toTraceparent,
 } from './traceparent.js';
 export type { ParsedTraceparent } from './traceparent.js';
+
+// Re-export the configure hook from the package root so `node ace configure` finds it
+export { configure } from '../configure.js'
