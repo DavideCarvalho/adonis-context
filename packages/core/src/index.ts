@@ -31,4 +31,4 @@ export {
 export type { ParsedTraceparent } from './traceparent.js';
 
 // Re-export the configure hook from the package root so `node ace configure` finds it
-export { configure } from '../configure.js'
+export { configure } from '../configure.js';
