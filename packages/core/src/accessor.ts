@@ -9,7 +9,15 @@ export interface ContextAccessor {
   traceId(): string | undefined;
   tenantId(): string | undefined;
   userRef(): UserRef | undefined;
+  /**
+   * With no argument, the whole active store (or `undefined` outside a context) —
+   * what `@adonis-agora/telescope` and `@adonis-agora/resilience` read. With a key,
+   * that single field off the store — what `@adonis-agora/authz` reads to pull
+   * `globalRoles`. The two consumers disagreed on the shape of this slot; the
+   * key-less form stays byte-identical so neither breaks.
+   */
   get(): ContextStore | undefined;
+  get(key: string): unknown;
 }
 
 /** Default accessor: a thin facade over the singleton {@link Context}. */
@@ -17,7 +25,12 @@ export const contextAccessor: ContextAccessor = {
   traceId: () => Context.traceId(),
   tenantId: () => Context.tenantId(),
   userRef: () => Context.userRef(),
-  get: () => Context.get(),
+  // Cast the single implementation onto the overloaded signature: TypeScript won't
+  // infer a one-arg arrow as satisfying an overload set in an object literal.
+  get: ((key?: string) => {
+    const store = Context.get();
+    return key === undefined ? store : store?.[key as keyof ContextStore];
+  }) as ContextAccessor['get'],
 };
 
 /**
