@@ -14,7 +14,7 @@ import { Callout } from 'fumadocs-ui/components/callout';
 | **2** | Populate fields / trace id | `traceId` / `initialize` / `enrichers` in `defineConfig` | `traceparent` header → random |
 | **3** | Non-HTTP entrypoints | don't plug the middleware + `Context.run` / `enterWith` | middleware on `server` stack |
 | **4** | What survives cross-process | `carrier` / `serialize` / `baggage` in `defineConfig` | `traceId` + `tenantId` + `userRef` |
-| **5** | Swap the accessor libs read | `app.container.swap()` the binding | default accessor |
+| **5** | Swap the accessor libs read | override the `globalThis` accessor slot | default accessor |
 
 Everything in levels 2 and 4 lives in the single `config/context.ts` file, validated by the exported `defineConfig` helper.
 
@@ -198,7 +198,13 @@ interface ContextAccessor {
 }
 ```
 
-The default implementation, `contextAccessor`, is a thin facade over the singleton `Context`. The package also registers it as a binding in the IoC container so you can **swap or mock** it — for instance an accessor that resolves the *full* user from the `userRef`, or one used in tests:
+The default implementation, `contextAccessor`, is a thin facade over the singleton `Context`, and it is published on that slot **at module load** — merely importing `@adonis-agora/context` (which the provider does) wires it. `CONTEXT_ACCESSOR` is the `symbol`, not a container binding.
+
+<Callout type="warn" title="This is a globalThis slot, not an IoC binding">
+  The accessor does **not** live in the IoC container. `ContextProvider` only has a `boot()` — it pushes cross-boundary config onto the singleton and hands the population hooks to the middleware; it **binds nothing**, so `app.container.swap(CONTEXT_ACCESSOR, …)` does nothing. Consumers read `globalThis[Symbol.for('@agora/context:accessor')]` structurally, and that is exactly where you swap it: overwrite the slot.
+</Callout>
+
+To install a custom accessor — for instance one that resolves the *full* user from the `userRef` — overwrite the `globalThis` slot with your own implementation. Do it once, early (a provider `boot()` is a fine place to run the assignment, but it is a plain global write, not a container call):
 
 ```ts title="providers/app_provider.ts"
 import {
@@ -211,23 +217,26 @@ export default class AppProvider {
   constructor(protected app: ApplicationService) {}
 
   async boot() {
-    const users = await this.app.container.make(UserRepository)
-
     const hydrating: ContextAccessor = {
       traceId: () => Context.traceId(),
       tenantId: () => Context.tenantId(),
       userRef: () => Context.userRef(),
-      get: () => Context.get(),
+      // The overloaded `get`: no-arg → the whole store; keyed → a single field.
+      get: ((key?: string) => {
+        const store = Context.get()
+        return key === undefined ? store : store?.[key as keyof typeof store]
+      }) as ContextAccessor['get'],
       // ...plus whatever extra resolution your consumers expect
     }
 
-    this.app.container.swap(CONTEXT_ACCESSOR as any, () => hydrating)
+    // Overwrite the published slot — this is what every consumer lib reads.
+    ;(globalThis as Record<symbol, unknown>)[CONTEXT_ACCESSOR] = hydrating
   }
 }
 ```
 
 <Callout type="info">
-  Swapping the container binding is primarily an **advanced / testing** seam. Most consumer libraries read the structural `globalThis` accessor, so the everyday way to change what they see is the config in levels 1–4, not a container swap.
+  Overwriting the slot is primarily an **advanced / testing** seam. Most consumer libraries read the structural `globalThis` accessor, so the everyday way to change what they see is the config in levels 1–4, not a slot swap. In tests, prefer the [testing helpers](/docs/context/testing) (`runWithContext` / `enterContext`) — they populate the *real* store the default accessor reads, so you rarely need to replace the accessor at all. If a test truly must, save and restore the previous slot value in a teardown so it does not leak into the next test.
 </Callout>
 
 ---
@@ -265,6 +274,33 @@ contextWriter.set({ userRef: { type: 'user', id: 42 }, tenantId: 'acme' })
 ```
 
 Under the hood the writer just calls `Context.set` per key, so the active-store lookup and the out-of-context no-op (with the one-shot warning) behave exactly as documented in [Level 2](#level-2--populate-fields-and-override-the-trace-id).
+
+### Restoring a whole store from a sibling lib — `contextScope` / `CONTEXT_SCOPE`
+
+`CONTEXT_SET` only *populates* an **already-active** store — it is a no-op where none exists. That is the wrong tool for a worker that starts with no active scope and needs to **establish** a store from a serialized snapshot before running work. For that, `@adonis-agora/context` publishes a third `globalThis` slot keyed by `Symbol.for('@agora/context:scope')`, exported as `CONTEXT_SCOPE`, whose value is the `contextScope(snapshot, fn)` function:
+
+```ts
+import { contextScope } from '@adonis-agora/context'
+
+// Runs `fn` INSIDE a freshly-entered store seeded from the full snapshot.
+// The ENTIRE snapshot survives (including module-augmented keys), and a
+// snapshot missing/empty `traceId` is repaired via the same trace-id safety
+// net as deserialize(). An `undefined` snapshot runs `fn` with no active store.
+const result = contextScope(snapshot, () => doTheWork())
+```
+
+This is the scoped counterpart to `CONTEXT_SET`: where the writer *merges* a patch into the current store, `contextScope` *creates* the store around a callback (it delegates to `Context.run`). It is precisely the primitive `@adonis-agora/durable` reads — structurally, no import — to restore the originating request's context on a worker before invoking a remote-step handler (see [Cross-Process → durable](/docs/context/cross-process#adonis-agoradurable-propagates-context-automatically)). A sibling lib consumes it the same structural way, degrading to a plain call when the slot is absent:
+
+```ts
+const scope = (globalThis as any)[Symbol.for('@agora/context:scope')] as
+  | (<T>(snapshot: Record<string, unknown> | undefined, fn: () => T) => T)
+  | undefined
+
+// Degrades to running fn with no context when @adonis-agora/context is absent.
+scope ? scope(snapshot, () => run()) : run()
+```
+
+The three slots line up as a set: `CONTEXT_ACCESSOR` *reads*, `CONTEXT_SET` *writes into* an active store, and `CONTEXT_SCOPE` *establishes* a store from a snapshot.
 
 ---
 

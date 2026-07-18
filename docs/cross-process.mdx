@@ -235,6 +235,31 @@ Context.fromBaggage(req.headers.baggage, () => doTheWork(), {
 
 By default `toBaggage` maps `tenantId` and `userRef` (the ref encoded as a compact `type:id` token). `fromBaggage` is tolerant of a malformed or absent header — it just yields a context with those fields unset. Tune the keys, or disable a field entirely, via the `baggage` config option — see [Customization → cross-process carrier](/docs/context/customization#level-4--cross-process-carrier).
 
+### The low-level codecs
+
+`toBaggage` / `fromBaggage` are the ergonomic front doors, but the four pure functions they are built on are exported too, for when you need to read or write a `baggage` header outside the `Context` lifecycle — a gateway, a piece of middleware for a non-Agora service, a test:
+
+| Export | Signature | What it does |
+|--------|-----------|--------------|
+| `encodeBaggage` | `(entries: Baggage) => string` | Serialize a flat `key → value` map into a W3C `baggage` header value. Values are percent-encoded; returns `''` for an empty map. |
+| `decodeBaggage` | `(header: string \| string[] \| undefined) => Baggage` | Parse a `baggage` header back into a map. **Tolerant** — empty members, stray commas, keyless members and `;`-properties are skipped rather than thrown; an invalid percent-encoding is kept raw. |
+| `encodeUserRef` | `(ref: UserRef) => string` | Encode a `UserRef` as the compact `type:id` token baggage carries. |
+| `decodeUserRef` | `(token: string) => UserRef \| undefined` | Parse a `type:id` token back into a `UserRef`. A colon-less token is treated as an id with the default `type: 'user'`; an empty token returns `undefined`. |
+
+`Baggage` is the shared type for a decoded map — simply `Record<string, string>`.
+
+```ts
+import { encodeBaggage, decodeBaggage, encodeUserRef, decodeUserRef } from '@adonis-agora/context'
+
+const header = encodeBaggage({ tenantId: 't1', userRef: encodeUserRef({ type: 'user', id: 42 }) })
+// 'tenantId=t1,userRef=user%3A42'
+
+const map = decodeBaggage(header)          // { tenantId: 't1', userRef: 'user:42' }
+const ref = decodeUserRef(map.userRef)     // { type: 'user', id: '42' }
+```
+
+These are the exact primitives `Context.toBaggage`/`fromBaggage` use internally; reach for them only when you are handling the header yourself.
+
 ---
 
 ## The snapshot caveat
